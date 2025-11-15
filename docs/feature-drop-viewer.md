@@ -20,3 +20,4 @@ The first UI iteration focuses on a distraction-free drag-and-drop experience th
 - Camera framing relies on the model’s bounding box to compute an offset vector; damping controls keep navigation smooth after the auto zoom.
 - UI chrome (prompt, drop surface, status, control hints) lives in `src/style.css` and is intentionally minimal so the scene remains the focus. A small instruction chip reminds users they can drag to orbit, right-drag to pan, and scroll to zoom.
 - `packages/app/public/samples/cube.gltf` is a built-in test asset (vertex-colored cube with unique face colors) used to verify drag-and-drop behavior without sourcing external models.
+- Automated coverage: `packages/app/tests/e2e/drag-and-drop.spec.cjs` uses Playwright to simulate dropping the cube fixture, ensuring the prompt hides and the scene stays interactive in CI.

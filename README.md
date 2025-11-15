@@ -37,6 +37,23 @@ pnpm dev
 
 For a quick manual test, open the running app and drag `packages/app/public/samples/cube.gltf` into the viewport—the placeholder cube (each face colored differently) loads instantly and hides the “Drop 3D Models” prompt.
 
+## Testing
+
+End-to-end checks run with Playwright and simulate dropping the bundled cube model:
+
+```bash
+# From repo root, install dependencies (once)
+pnpm install --filter app
+
+# Install browsers once per machine
+cd packages/app && pnpm exec playwright install
+
+# Run tests (from repo root or packages/app)
+pnpm --filter app test:e2e
+```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the same suite on every push/PR, ensuring drag-and-drop continues to hide the prompt and display the model.
+
 ## WASM Dev Notes
 
 All build workflows (local toolchain or Docker) live in `docs/wasm-dev-cycle.md`. Follow that guide whenever you need to rebuild the module; it explains how the artifacts flow into `packages/app/public/wasm` and when to commit them.

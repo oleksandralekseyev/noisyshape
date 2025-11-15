@@ -6,3 +6,4 @@ packages/app/.vite
 packages/app/.DS_Store
 packages/core-wasm/build
 packages/core-wasm/dist
+packages/app/test-results
