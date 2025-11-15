@@ -148,12 +148,13 @@ test.describe('Drag-and-drop viewer', () => {
     await expect(page.locator('.drop-message')).toHaveClass(/hidden/);
     await expect(page.locator('.model-row')).toHaveCount(1);
     await expect(button).not.toBeVisible();
-    const panelButton = page.locator('.panel-action button');
-    await expect(panelButton).toHaveText('LOAD MODEL');
     await expect(panelToggle).toBeEnabled();
     await expectSidebarHidden(page, true);
     await panelToggle.click();
+    const panelButton = page.locator('.panel-action button');
+    await expect(panelButton).toHaveText('LOAD MODEL');
     await expectSidebarHidden(page, false);
+    const panelBox = await panelButton.boundingBox();
     await panelToggle.click();
     await expectSidebarHidden(page, true);
 
@@ -165,10 +166,61 @@ test.describe('Drag-and-drop viewer', () => {
     expect(acceptAttr?.includes('application/vnd.ms-pki.stl')).toBe(true);
 
     const secondChooserPromise = page.waitForEvent('filechooser');
-    await panelButton.click();
+    await panelToggle.click();
+    const panelButtonVisible = page.locator('.panel-action button');
+    await expect(panelButtonVisible).toHaveText('LOAD MODEL');
+    await panelButtonVisible.click();
     const secondChooser = await secondChooserPromise;
     await secondChooser.setFiles(objFixture);
     await expect(page.locator('.model-row')).toHaveCount(2);
+  });
+
+  test('panel action cannot be triggered when hidden', async ({ page, context }) => {
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'maxTouchPoints', {
+        configurable: true,
+        get: () => 1
+      });
+      const originalMatchMedia = window.matchMedia;
+      window.matchMedia = (query) => {
+        if (query.includes('(pointer: coarse)')) {
+          return {
+            matches: true,
+            media: query,
+            onchange: null,
+            addListener() {},
+            removeListener() {},
+            addEventListener() {},
+            removeEventListener() {},
+            dispatchEvent() {
+              return false;
+            }
+          };
+        }
+        return originalMatchMedia(query);
+      };
+    });
+
+    await openEditor(page);
+    await dropCube(page);
+
+    const panelToggle = page.locator('.panel-toggle');
+    await expect(panelToggle).toBeEnabled();
+
+    await panelToggle.click();
+    const panelButton = page.locator('.panel-action button');
+    await expect(panelButton).toBeVisible();
+    const panelBox = await panelButton.boundingBox();
+    await panelToggle.click();
+    await expectSidebarHidden(page, true);
+    await expect(page.locator('.panel-action button')).toHaveCount(0);
+
+    const hiddenChooserPromise = page.waitForEvent('filechooser', { timeout: 2000 }).catch(() => null);
+    if (panelBox) {
+      await page.mouse.click(panelBox.x + panelBox.width / 2, panelBox.y + panelBox.height / 2);
+    }
+    const hiddenChooser = await hiddenChooserPromise;
+    expect(hiddenChooser).toBeNull();
   });
 
   test('new tabs start empty even when other tabs have models', async ({ context }) => {

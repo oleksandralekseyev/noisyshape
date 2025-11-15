@@ -57,16 +57,6 @@ export function createViewer(root: HTMLElement): void {
   let panelActionButton: HTMLButtonElement | null = null;
   let overlayAction: HTMLButtonElement | null = null;
 
-  if (allowTapImport) {
-    overlayAction = document.createElement('button');
-    overlayAction.type = 'button';
-    overlayAction.className = 'drop-action overlay-action';
-    overlayAction.textContent = 'LOAD MODEL';
-    overlayAction.addEventListener('click', () => filePicker.click());
-    overlay.appendChild(overlayAction);
-    overlay.classList.add('drop-message-action');
-  }
-
   const renderer = new WebGLRenderer({ antialias: true, alpha: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(viewport.clientWidth, viewport.clientHeight);
@@ -131,6 +121,16 @@ export function createViewer(root: HTMLElement): void {
 
   const filePicker = createFilePicker(handleFile);
   viewport.appendChild(filePicker);
+
+  if (allowTapImport) {
+    overlayAction = document.createElement('button');
+    overlayAction.type = 'button';
+    overlayAction.className = 'drop-action overlay-action';
+    overlayAction.textContent = 'LOAD MODEL';
+    overlayAction.addEventListener('click', () => filePicker.click());
+    overlay.appendChild(overlayAction);
+    overlay.classList.add('drop-message-action');
+  }
   const ensurePanelAction = () => {
     if (panelActionButton) {
       return panelActionButton;
@@ -199,6 +199,7 @@ export function createViewer(root: HTMLElement): void {
     panelToggle.classList.toggle('is-disabled', !hasModels);
     panelToggle.setAttribute('aria-expanded', String(shouldShowPanel));
     panelToggle.setAttribute('aria-label', shouldShowPanel ? 'Hide model list' : 'Show model list');
+    updatePanelActions();
   };
 
   const updatePanelActions = () => {
@@ -209,7 +210,8 @@ export function createViewer(root: HTMLElement): void {
     if (overlayAction) {
       overlayAction.style.display = hasModels ? 'none' : '';
     }
-    if (hasModels) {
+    const shouldShowPanelAction = hasModels && panelOpen;
+    if (shouldShowPanelAction) {
       panel.setAction(ensurePanelAction());
     } else {
       panel.setAction(null);
@@ -221,7 +223,6 @@ export function createViewer(root: HTMLElement): void {
     updateModelDebugState(models);
     syncUnloadGuard(models.length > 0);
     updatePanelVisibility();
-    updatePanelActions();
   };
 
   const applyModel = (object: Object3D, meta: { name: string }) => {
