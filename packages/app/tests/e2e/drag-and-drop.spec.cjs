@@ -35,30 +35,30 @@ test.describe('Drag-and-drop viewer', () => {
     const centerPixel = await sampleCenterPixel(page);
     expect(isCloseToBackground(centerPixel)).toBe(false);
 
-    await expect(page.locator('.model-item')).toHaveCount(1);
+    await expect(page.locator('.model-row')).toHaveCount(1);
     await expectSidebarHidden(page, false);
 
     const modelStates = await getModelStates(page);
     expect(modelStates[0].visible).toBe(true);
     expect(modelStates[0].wireframe).toBe(false);
 
-    const modelItem = page.locator('.model-item').first();
-    const visibleToggle = modelItem.locator('input[data-role="visible-toggle"]');
-    const wireframeToggle = modelItem.locator('input[data-role="wireframe-toggle"]');
+    const modelItem = page.locator('.model-row').first();
+    const visibleToggle = modelItem.locator('button[data-role="visible-toggle"]');
+    const wireframeToggle = modelItem.locator('button[data-role="wireframe-toggle"]');
 
-    await visibleToggle.uncheck();
+    await visibleToggle.click();
     let updatedStates = await getModelStates(page);
     expect(updatedStates[0].visible).toBe(false);
 
-    await visibleToggle.check();
+    await visibleToggle.click();
     updatedStates = await getModelStates(page);
     expect(updatedStates[0].visible).toBe(true);
 
-    await wireframeToggle.check();
+    await wireframeToggle.click();
     updatedStates = await getModelStates(page);
     expect(updatedStates[0].wireframe).toBe(true);
 
-    await wireframeToggle.uncheck();
+    await wireframeToggle.click();
     updatedStates = await getModelStates(page);
     expect(updatedStates[0].wireframe).toBe(false);
 
