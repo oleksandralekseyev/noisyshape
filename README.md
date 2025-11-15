@@ -54,6 +54,8 @@ pnpm --filter app test:e2e
 
 GitHub Actions (`.github/workflows/ci.yml`) runs the same suite on every push/PR, ensuring drag-and-drop continues to hide the prompt and display the model.
 
+The Playwright suite also checks that orbit, pan, and zoom gestures move the camera, guaranteeing the scene stays interactive.
+
 ## WASM Dev Notes
 
 All build workflows (local toolchain or Docker) live in `docs/wasm-dev-cycle.md`. Follow that guide whenever you need to rebuild the module; it explains how the artifacts flow into `packages/app/public/wasm` and when to commit them.

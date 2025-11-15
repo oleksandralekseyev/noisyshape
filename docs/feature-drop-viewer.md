@@ -18,6 +18,6 @@ The first UI iteration focuses on a distraction-free drag-and-drop experience th
 - `src/viewer.ts` wires Three.js (scene, renderer, OrbitControls, lights, grid) and the drag-and-drop lifecycle.
 - Dropped files are piped through `URL.createObjectURL` and fed to `GLTFLoader`, so binary `.glb` files with embedded textures work without extra assets.
 - Camera framing relies on the model’s bounding box to compute an offset vector; damping controls keep navigation smooth after the auto zoom.
-- UI chrome (prompt, drop surface, status, control hints) lives in `src/style.css` and is intentionally minimal so the scene remains the focus. A small instruction chip reminds users they can drag to orbit, right-drag to pan, and scroll to zoom.
+- UI chrome (prompt, drop surface, status) lives in `src/style.css` and is intentionally minimal so the scene remains the focus; orbit/pan/zoom controls behave like standard Three.js navigation without extra hints. The drop surface only becomes interactive when a file is dragged over the window so users can always manipulate the viewport.
 - `packages/app/public/samples/cube.gltf` is a built-in test asset (vertex-colored cube with unique face colors) used to verify drag-and-drop behavior without sourcing external models.
-- Automated coverage: `packages/app/tests/e2e/drag-and-drop.spec.cjs` uses Playwright to simulate dropping the cube fixture, ensuring the prompt hides and the scene stays interactive in CI.
+- Automated coverage: `packages/app/tests/e2e/drag-and-drop.spec.cjs` uses Playwright to simulate dropping the cube fixture and then orbiting/panning/zooming the camera. A lightweight debug hook (`window.__NOISYSHAPE_DEBUG.getCameraState()`) exposes camera data exclusively for automated tests.

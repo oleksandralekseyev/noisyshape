@@ -23,9 +23,8 @@ export function createViewer(root: HTMLElement): void {
   root.appendChild(host);
 
   const overlay = createOverlay('Drop 3D Models');
-  const instructions = createInstructions();
   const status = createStatus('Drop a .glb or .gltf file');
-  host.append(overlay, instructions, status);
+  host.append(overlay, status);
 
   const renderer = new WebGLRenderer({ antialias: true, alpha: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -46,6 +45,7 @@ export function createViewer(root: HTMLElement): void {
   controls.enableDamping = true;
   controls.enablePan = true;
   controls.enableZoom = true;
+  exposeDebugInterface(camera, controls);
 
   setupLights(scene);
 
@@ -137,13 +137,6 @@ function createStatus(text: string): HTMLDivElement {
   return status;
 }
 
-function createInstructions(): HTMLDivElement {
-  const el = document.createElement('div');
-  el.className = 'instructions';
-  el.innerHTML = 'Mouse: <strong>drag</strong> to orbit · <strong>right-drag</strong> to pan · <strong>scroll</strong> to zoom';
-  return el;
-}
-
 function statusMessage(el: HTMLElement, message: string, isError = false): void {
   el.textContent = message;
   el.classList.toggle('error', isError);
@@ -159,6 +152,15 @@ function setupDragAndDrop(container: HTMLElement, onFile: (file: File) => void):
   const dropSurface = document.createElement('div');
   dropSurface.className = 'drop-surface';
   container.appendChild(dropSurface);
+
+  const setDropSurfaceActive = (active: boolean) => {
+    dropSurface.style.pointerEvents = active ? 'auto' : 'none';
+    if (!active) {
+      dropSurface.classList.remove('dragging');
+    }
+  };
+
+  setDropSurfaceActive(false);
 
   const preventDefaults = (event: DragEvent) => {
     event.preventDefault();
@@ -178,6 +180,8 @@ function setupDragAndDrop(container: HTMLElement, onFile: (file: File) => void):
   const handleDrop = (event: DragEvent) => {
     preventDefaults(event);
     dropSurface.classList.remove('dragging');
+    setDropSurfaceActive(false);
+    dragDepth = 0;
 
     const files = event.dataTransfer?.files;
     if (!files || files.length === 0) {
@@ -191,8 +195,38 @@ function setupDragAndDrop(container: HTMLElement, onFile: (file: File) => void):
   dropSurface.addEventListener('dragleave', dragOut);
   dropSurface.addEventListener('drop', handleDrop);
 
+  let dragDepth = 0;
+
+  const enableDrop = (event: DragEvent) => {
+    preventDefaults(event);
+    dragDepth += 1;
+    if (dragDepth === 1) {
+      setDropSurfaceActive(true);
+    }
+  };
+
+  const disableDrop = (event?: DragEvent) => {
+    if (event) {
+      preventDefaults(event);
+    }
+    dragDepth = 0;
+    setDropSurfaceActive(false);
+  };
+
+  window.addEventListener('dragenter', enableDrop);
   window.addEventListener('dragover', preventDefaults);
-  window.addEventListener('drop', preventDefaults);
+  window.addEventListener('dragleave', (event) => {
+    preventDefaults(event);
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) {
+      setDropSurfaceActive(false);
+    }
+  });
+  window.addEventListener('dragend', disableDrop);
+  window.addEventListener('drop', (event) => {
+    preventDefaults(event);
+    disableDrop();
+  });
 }
 
 function loadGltfFromFile(loader: GLTFLoader, file: File, onLoad: (gltf: GLTF) => void): Promise<void> {
@@ -231,3 +265,31 @@ function fitCameraToObject(camera: PerspectiveCamera, controls: OrbitControls, o
   controls.target.copy(center);
   controls.update();
 }
+
+type CameraState = {
+  position: [number, number, number];
+  target: [number, number, number];
+};
+
+function exposeDebugInterface(camera: PerspectiveCamera, controls: OrbitControls): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.__NOISYSHAPE_DEBUG = {
+    getCameraState: () => ({
+      position: camera.position.toArray() as [number, number, number],
+      target: controls.target.toArray() as [number, number, number]
+    })
+  };
+}
+
+declare global {
+  interface Window {
+    __NOISYSHAPE_DEBUG?: {
+      getCameraState: () => CameraState;
+    };
+  }
+}
+
+export {};

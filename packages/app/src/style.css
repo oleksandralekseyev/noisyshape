@@ -64,11 +64,11 @@ body,
   position: absolute;
   inset: 0;
   z-index: 3;
+  pointer-events: none;
 }
 
 .drop-surface.dragging {
   border: 2px dashed rgba(0, 153, 255, 0.8);
-  pointer-events: none;
 }
 
 .status {
@@ -95,24 +95,4 @@ body,
 .status.is-empty {
   opacity: 0;
   transform: translate(-50%, 10px);
-}
-
-.instructions {
-  position: absolute;
-  z-index: 2;
-  top: 20px;
-  right: 20px;
-  padding: 0.4rem 0.8rem;
-  background: rgba(0, 0, 0, 0.35);
-  border-radius: 6px;
-  font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.8);
-  pointer-events: none;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.instructions strong {
-  color: #fff;
-  font-weight: 600;
 }
