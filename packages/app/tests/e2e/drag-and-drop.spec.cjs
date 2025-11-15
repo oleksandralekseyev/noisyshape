@@ -18,7 +18,8 @@ test.describe('Drag-and-drop viewer', () => {
     await dropSurface.dispatchEvent('drop', { dataTransfer });
 
     await expect(overlay).toHaveClass(/hidden/);
-    await expect(page.locator('.status')).toHaveText(/Loaded cube\.gltf/i);
+    await expect(page.locator('.status')).toHaveText('');
+    await expect(page.locator('.status')).toHaveClass(/is-empty/);
     await expect(page.locator('canvas')).toBeVisible();
   });
 });

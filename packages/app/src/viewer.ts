@@ -98,7 +98,7 @@ export function createViewer(root: HTMLElement): void {
           hideOverlay(overlay);
         }
 
-        statusMessage(status, `Loaded ${file.name}`);
+        statusMessage(status, '');
       });
     } catch (error) {
       console.error(error);
@@ -131,6 +131,9 @@ function createStatus(text: string): HTMLDivElement {
   const status = document.createElement('div');
   status.className = 'status';
   status.textContent = text;
+  if (!text) {
+    status.classList.add('is-empty');
+  }
   return status;
 }
 
@@ -144,6 +147,7 @@ function createInstructions(): HTMLDivElement {
 function statusMessage(el: HTMLElement, message: string, isError = false): void {
   el.textContent = message;
   el.classList.toggle('error', isError);
+  el.classList.toggle('is-empty', message.length === 0);
 }
 
 function isSupported(fileName: string): boolean {

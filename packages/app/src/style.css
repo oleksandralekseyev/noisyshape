@@ -85,10 +85,16 @@ body,
   min-width: 280px;
   text-align: center;
   pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
 .status.error {
   color: #ffb3b3;
+}
+
+.status.is-empty {
+  opacity: 0;
+  transform: translate(-50%, 10px);
 }
 
 .instructions {

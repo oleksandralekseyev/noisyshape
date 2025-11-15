@@ -9,7 +9,7 @@ The first UI iteration focuses on a distraction-free drag-and-drop experience th
 1. The viewport renders a dark grid, subtle lighting, and the drop prompt.
 2. When a user drags a file into the window, the drop surface highlights and the app keeps the browser from opening the file.
 3. Dropping the first supported file (.glb or .gltf) hides the prompt, loads the model with `GLTFLoader`, and automatically frames the camera so the object fits the view.
-4. Status text under the viewport reports progress (“Loading car.glb…”, “Loaded car.glb”) or errors (“Unsupported file. Use .glb or .gltf”).
+4. Status text under the viewport reports progress (“Loading car.glb…”) or errors (“Unsupported file. Use .glb or .gltf”), then fades away once the mesh renders so the scene stays uncluttered.
 5. Additional drops replace the current model and refocus the camera so the newest asset remains visible.
 
 ## Implementation Notes
