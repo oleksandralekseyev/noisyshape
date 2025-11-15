@@ -54,6 +54,18 @@ export function createViewer(root: HTMLElement): void {
   const overlay = createOverlay(allowTapImport ? '' : 'Drop 3D Models');
   const status = createStatus('Drop a .glb, .gltf, .obj, .stl, or .ply file');
   viewport.append(overlay, status);
+  let panelActionButton: HTMLButtonElement | null = null;
+  let overlayAction: HTMLButtonElement | null = null;
+
+  if (allowTapImport) {
+    overlayAction = document.createElement('button');
+    overlayAction.type = 'button';
+    overlayAction.className = 'drop-action overlay-action';
+    overlayAction.textContent = 'LOAD MODEL';
+    overlayAction.addEventListener('click', () => filePicker.click());
+    overlay.appendChild(overlayAction);
+    overlay.classList.add('drop-message-action');
+  }
 
   const renderer = new WebGLRenderer({ antialias: true, alpha: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -82,10 +94,6 @@ export function createViewer(root: HTMLElement): void {
   exposeDebugInterface(camera, controls);
 
   setupLights(scene);
-
-  const grid = new GridHelper(40, 40, new Color('#1f6feb'), new Color('#1f6feb'));
-  grid.position.y = -0.0001;
-  scene.add(grid);
 
   const gltfLoader = new GLTFLoader();
   const objLoader = new OBJLoader();
@@ -123,6 +131,17 @@ export function createViewer(root: HTMLElement): void {
 
   const filePicker = createFilePicker(handleFile);
   viewport.appendChild(filePicker);
+  const ensurePanelAction = () => {
+    if (panelActionButton) {
+      return panelActionButton;
+    }
+    panelActionButton = document.createElement('button');
+    panelActionButton.type = 'button';
+    panelActionButton.className = 'drop-action panel-action-button';
+    panelActionButton.textContent = 'LOAD MODEL';
+    panelActionButton.addEventListener('click', () => filePicker.click());
+    return panelActionButton;
+  };
 
   const models: ModelEntry[] = [];
   let hasLoadedModel = false;
@@ -160,11 +179,49 @@ export function createViewer(root: HTMLElement): void {
   });
   host.appendChild(panel.element);
 
+  let panelOpen = !allowTapImport;
+
+  const panelToggle = createPanelToggle(() => {
+    if (models.length === 0) {
+      return;
+    }
+    panelOpen = !panelOpen;
+    updatePanelVisibility();
+  });
+  host.appendChild(panelToggle);
+
+  const updatePanelVisibility = () => {
+    const hasModels = models.length > 0;
+    const shouldShowPanel = hasModels && panelOpen;
+    panel.setVisible(shouldShowPanel);
+    host.classList.toggle('panel-open', shouldShowPanel);
+    panelToggle.disabled = !hasModels;
+    panelToggle.classList.toggle('is-disabled', !hasModels);
+    panelToggle.setAttribute('aria-expanded', String(shouldShowPanel));
+    panelToggle.setAttribute('aria-label', shouldShowPanel ? 'Hide model list' : 'Show model list');
+  };
+
+  const updatePanelActions = () => {
+    if (!allowTapImport) {
+      return;
+    }
+    const hasModels = models.length > 0;
+    if (overlayAction) {
+      overlayAction.style.display = hasModels ? 'none' : '';
+    }
+    if (hasModels) {
+      panel.setAction(ensurePanelAction());
+    } else {
+      panel.setAction(null);
+    }
+  };
+
   const refreshPanel = () => {
     panel.render(models);
-    panel.setVisible(models.length > 0);
     updateModelDebugState(models);
     syncUnloadGuard(models.length > 0);
+    updatePanelVisibility();
+    updatePanelActions();
   };
 
   const applyModel = (object: Object3D, meta: { name: string }) => {
@@ -227,15 +284,6 @@ export function createViewer(root: HTMLElement): void {
   refreshPanel();
   void restorePersistedModels();
 
-  if (allowTapImport) {
-    const action = document.createElement('button');
-    action.type = 'button';
-    action.className = 'drop-action';
-    action.textContent = 'CHOOSE MODEL';
-    action.addEventListener('click', () => filePicker.click());
-    overlay.appendChild(action);
-    overlay.classList.add('drop-message-action');
-  }
 }
 
 function setupLights(scene: Scene): void {
@@ -450,7 +498,14 @@ type ModelPanelHandlers = {
   onWireframeChange: (id: string, wireframe: boolean) => void;
 };
 
-function createModelPanel(handlers: ModelPanelHandlers) {
+type ModelPanelInstance = {
+  element: HTMLElement;
+  render: (models: ModelEntry[]) => void;
+  setVisible: (visible: boolean) => void;
+  setAction: (action: HTMLElement | null) => void;
+};
+
+function createModelPanel(handlers: ModelPanelHandlers): ModelPanelInstance {
   const sidebar = document.createElement('div');
   sidebar.className = 'sidebar';
 
@@ -480,7 +535,11 @@ function createModelPanel(handlers: ModelPanelHandlers) {
   list.append(tableWrapper, empty);
   tableWrapper.hidden = true;
   empty.hidden = false;
-  sidebar.append(header, list);
+  const actionSlot = document.createElement('div');
+  actionSlot.className = 'panel-action';
+  actionSlot.hidden = true;
+
+  sidebar.append(header, list, actionSlot);
 
   const render = (models: ModelEntry[]) => {
     tableBody.innerHTML = '';
@@ -543,6 +602,15 @@ function createModelPanel(handlers: ModelPanelHandlers) {
     render,
     setVisible: (visible: boolean) => {
       sidebar.classList.toggle('sidebar-hidden', !visible);
+    },
+    setAction: (action: HTMLElement | null) => {
+      actionSlot.innerHTML = '';
+      if (action) {
+        actionSlot.appendChild(action);
+        actionSlot.hidden = false;
+      } else {
+        actionSlot.hidden = true;
+      }
     }
   };
 }
@@ -731,6 +799,30 @@ function createFilePicker(onFile: (file: File) => void): HTMLInputElement {
     input.value = '';
   });
   return input;
+}
+
+function createPanelToggle(onToggle: () => void): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'panel-toggle is-disabled';
+  button.disabled = true;
+  button.setAttribute('aria-expanded', 'false');
+  button.setAttribute('aria-label', 'Show model list');
+  const icon = document.createElement('span');
+  icon.className = 'panel-toggle-icon';
+  for (let i = 0; i < 3; i += 1) {
+    const bar = document.createElement('span');
+    bar.className = 'panel-toggle-bar';
+    icon.appendChild(bar);
+  }
+  button.appendChild(icon);
+  button.addEventListener('click', () => {
+    if (button.disabled) {
+      return;
+    }
+    onToggle();
+  });
+  return button;
 }
 
 function supportsTapImport(): boolean {

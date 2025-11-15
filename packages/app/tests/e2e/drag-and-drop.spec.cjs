@@ -133,9 +133,12 @@ test.describe('Drag-and-drop viewer', () => {
 
     await openEditor(page);
 
-    const button = page.locator('.drop-action');
+    const button = page.locator('.drop-message .overlay-action').first();
+    const panelToggle = page.locator('.panel-toggle');
     await expect(button).toBeVisible();
-    await expect(button).toHaveText('CHOOSE MODEL');
+    await expect(button).toHaveText('LOAD MODEL');
+    await expect(panelToggle).toBeVisible();
+    await expect(panelToggle).toBeDisabled();
 
     const fileChooserPromise = page.waitForEvent('filechooser');
     await button.click();
@@ -144,6 +147,15 @@ test.describe('Drag-and-drop viewer', () => {
 
     await expect(page.locator('.drop-message')).toHaveClass(/hidden/);
     await expect(page.locator('.model-row')).toHaveCount(1);
+    await expect(button).not.toBeVisible();
+    const panelButton = page.locator('.panel-action button');
+    await expect(panelButton).toHaveText('LOAD MODEL');
+    await expect(panelToggle).toBeEnabled();
+    await expectSidebarHidden(page, true);
+    await panelToggle.click();
+    await expectSidebarHidden(page, false);
+    await panelToggle.click();
+    await expectSidebarHidden(page, true);
 
     const acceptAttr = await button.evaluate((el) => {
       const input = document.querySelector('input[type="file"]');
@@ -151,6 +163,12 @@ test.describe('Drag-and-drop viewer', () => {
     });
     expect(acceptAttr?.includes('application/sla')).toBe(true);
     expect(acceptAttr?.includes('application/vnd.ms-pki.stl')).toBe(true);
+
+    const secondChooserPromise = page.waitForEvent('filechooser');
+    await panelButton.click();
+    const secondChooser = await secondChooserPromise;
+    await secondChooser.setFiles(objFixture);
+    await expect(page.locator('.model-row')).toHaveCount(2);
   });
 
   test('new tabs start empty even when other tabs have models', async ({ context }) => {
