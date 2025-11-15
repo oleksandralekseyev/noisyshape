@@ -4,6 +4,9 @@ const fs = require('node:fs/promises');
 const { PNG } = require('pngjs');
 
 const cubeFixture = path.resolve(__dirname, '../../public/samples/cube.gltf');
+const objFixture = path.resolve(__dirname, '../../public/samples/cube.obj');
+const stlFixture = path.resolve(__dirname, '../../public/samples/cube.stl');
+const plyFixture = path.resolve(__dirname, '../../public/samples/cube.ply');
 
 test.describe('Drag-and-drop viewer', () => {
   test('loads cube, hides prompt, and persists after reload', async ({ page }) => {
@@ -84,6 +87,63 @@ test.describe('Drag-and-drop viewer', () => {
     const names = restored.map((model) => model.name).sort();
     expect(names).toEqual(['first-model.gltf', 'second-model.gltf']);
     await expectUnloadGuard(page, true);
+  });
+
+  test('loads obj, stl, and ply models', async ({ page }) => {
+    await openEditor(page);
+
+    await dropModel(page, objFixture);
+    await dropModel(page, stlFixture);
+    await dropModel(page, plyFixture);
+
+    await expect(page.locator('.model-row')).toHaveCount(3);
+    const states = await getModelStates(page);
+    expect(states.map((state) => state.name).sort()).toEqual([
+      'cube.obj',
+      'cube.ply',
+      'cube.stl'
+    ]);
+  });
+
+  test('touch devices import via choose button', async ({ page, context }) => {
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'maxTouchPoints', {
+        configurable: true,
+        get: () => 1
+      });
+      const originalMatchMedia = window.matchMedia;
+      window.matchMedia = (query) => {
+        if (query.includes('(pointer: coarse)')) {
+          return {
+            matches: true,
+            media: query,
+            onchange: null,
+            addListener() {},
+            removeListener() {},
+            addEventListener() {},
+            removeEventListener() {},
+            dispatchEvent() {
+              return false;
+            }
+          };
+        }
+        return originalMatchMedia(query);
+      };
+    });
+
+    await openEditor(page);
+
+    const button = page.locator('.drop-action');
+    await expect(button).toBeVisible();
+    await expect(button).toHaveText('CHOOSE MODEL');
+
+    const fileChooserPromise = page.waitForEvent('filechooser');
+    await button.click();
+    const fileChooser = await fileChooserPromise;
+    await fileChooser.setFiles(cubeFixture);
+
+    await expect(page.locator('.drop-message')).toHaveClass(/hidden/);
+    await expect(page.locator('.model-row')).toHaveCount(1);
   });
 
   test('new tabs start empty even when other tabs have models', async ({ context }) => {
@@ -180,7 +240,11 @@ async function openEditor(page, options = {}) {
 }
 
 async function dropCube(page, options = {}) {
-  const dataTransfer = await createDataTransfer(page, cubeFixture, options.fileName);
+  await dropModel(page, cubeFixture, options);
+}
+
+async function dropModel(page, filePath, options = {}) {
+  const dataTransfer = await createDataTransfer(page, filePath, options);
   const canvas = page.locator('canvas');
   await canvas.dispatchEvent('dragenter', { dataTransfer });
   await canvas.dispatchEvent('dragover', { dataTransfer });
@@ -188,23 +252,35 @@ async function dropCube(page, options = {}) {
   await expect(page.locator('.drop-message')).toHaveClass(/hidden/);
 }
 
-async function createDataTransfer(page, filePath, fileNameOverride) {
-  const fileName = fileNameOverride ?? path.basename(filePath);
+async function createDataTransfer(page, filePath, options = {}) {
+  const fileName = options.fileName ?? path.basename(filePath);
   const buffer = await fs.readFile(filePath);
+  const mime = options.mime ?? guessMimeType(fileName);
 
   const payload = {
     fileName,
-    bytes: Array.from(buffer)
+    bytes: Array.from(buffer),
+    mime
   };
 
-  return page.evaluateHandle(({ fileName, bytes }) => {
+  return page.evaluateHandle(({ fileName, bytes, mime }) => {
     const dt = new DataTransfer();
     const file = new File([new Uint8Array(bytes)], fileName, {
-      type: 'model/gltf+json'
+      type: mime
     });
     dt.items.add(file);
     return dt;
   }, payload);
+}
+
+function guessMimeType(fileName) {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith('.glb')) return 'model/gltf-binary';
+  if (lower.endsWith('.gltf')) return 'model/gltf+json';
+  if (lower.endsWith('.obj')) return 'text/plain';
+  if (lower.endsWith('.stl')) return 'model/stl';
+  if (lower.endsWith('.ply')) return 'application/octet-stream';
+  return 'application/octet-stream';
 }
 
 async function getCameraState(page) {

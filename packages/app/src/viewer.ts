@@ -7,6 +7,8 @@ import {
   GridHelper,
   LineBasicMaterial,
   LineSegments,
+  Mesh,
+  MeshStandardMaterial,
   Object3D,
   PerspectiveCamera,
   Scene,
@@ -16,7 +18,10 @@ import {
   WireframeGeometry
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import {
   clearPersistedModels,
   getPersistedModels,
@@ -24,7 +29,7 @@ import {
   type StoredModel
 } from './modelStorage';
 
-const SUPPORTED_EXTENSIONS = ['.glb', '.gltf'];
+const SUPPORTED_EXTENSIONS = ['.glb', '.gltf', '.obj', '.stl', '.ply'];
 
 let lastMaterialStates: MaterialState[] = [];
 const UNLOAD_WARNING = 'You have models loaded. Leaving will lose them.';
@@ -44,8 +49,10 @@ export function createViewer(root: HTMLElement): void {
   viewport.className = 'viewport';
   host.appendChild(viewport);
 
-  const overlay = createOverlay('Drop 3D Models');
-  const status = createStatus('Drop a .glb or .gltf file');
+  const allowTapImport = supportsTapImport();
+
+  const overlay = createOverlay(allowTapImport ? '' : 'Drop 3D Models');
+  const status = createStatus('Drop a .glb, .gltf, .obj, .stl, or .ply file');
   viewport.append(overlay, status);
 
   const renderer = new WebGLRenderer({ antialias: true, alpha: false });
@@ -80,7 +87,43 @@ export function createViewer(root: HTMLElement): void {
   grid.position.y = -0.0001;
   scene.add(grid);
 
-  const loader = new GLTFLoader();
+  const gltfLoader = new GLTFLoader();
+  const objLoader = new OBJLoader();
+  const stlLoader = new STLLoader();
+  const plyLoader = new PLYLoader();
+
+  const modelLoaders: ModelLoader[] = [
+    createGltfModelLoader(gltfLoader),
+    createObjModelLoader(objLoader),
+    createStlModelLoader(stlLoader),
+    createPlyModelLoader(plyLoader)
+  ];
+
+  const handleFile = async (file: File) => {
+    if (!isSupported(file.name)) {
+      statusMessage(status, 'Unsupported file. Use .glb, .gltf, .obj, .stl, or .ply', true);
+      return;
+    }
+
+    statusMessage(status, `Loading ${file.name}…`);
+
+    try {
+      const loader = findModelLoader(modelLoaders, file.name);
+      if (!loader) {
+        throw new Error(`No loader for ${file.name}`);
+      }
+      const object = await loader.loadFromFile(file);
+      applyModel(object, { name: file.name });
+      void persistModel(file);
+    } catch (error) {
+      console.error(error);
+      statusMessage(status, 'Failed to load model. Check the console for details.', true);
+    }
+  };
+
+  const filePicker = createFilePicker(handleFile);
+  viewport.appendChild(filePicker);
+
   const models: ModelEntry[] = [];
   let hasLoadedModel = false;
 
@@ -124,20 +167,21 @@ export function createViewer(root: HTMLElement): void {
     syncUnloadGuard(models.length > 0);
   };
 
-  const applyModel = (gltf: GLTF, meta: { name: string }) => {
-    scene.add(gltf.scene);
+  const applyModel = (object: Object3D, meta: { name: string }) => {
+    object.name = meta.name;
+    scene.add(object);
 
     const entry: ModelEntry = {
       id: createModelId(),
       name: meta.name,
-      object: gltf.scene,
+      object,
       visible: true,
       wireframe: false
     };
     models.push(entry);
 
-    fitCameraToObject(camera, controls, gltf.scene);
-    lastMaterialStates = collectMaterialStates(gltf.scene);
+    fitCameraToObject(camera, controls, object);
+    lastMaterialStates = collectMaterialStates(object);
     setModelWireframe(entry, false);
     setModelVisibility(entry, true);
     refreshPanel();
@@ -170,30 +214,28 @@ export function createViewer(root: HTMLElement): void {
 
   const restoreEntry = async (entry: StoredModel) => {
     statusMessage(status, `Restoring ${entry.name}…`);
-    await loadGltfFromDataUrl(loader, entry.dataUrl, (gltf) =>
-      applyModel(gltf, { name: entry.name })
-    );
+    const loader = findModelLoader(modelLoaders, entry.name);
+    if (!loader) {
+      throw new Error(`No loader registered for ${entry.name}`);
+    }
+    const object = await loader.loadFromDataUrl(entry.name, entry.dataUrl);
+    applyModel(object, { name: entry.name });
   };
 
-  setupDragAndDrop(viewport, async (file) => {
-    if (!isSupported(file.name)) {
-      statusMessage(status, 'Unsupported file. Use .glb or .gltf', true);
-      return;
-    }
-
-    statusMessage(status, `Loading ${file.name}…`);
-
-    try {
-      await loadGltfFromFile(loader, file, (gltf) => applyModel(gltf, { name: file.name }));
-      void persistModel(file);
-    } catch (error) {
-      console.error(error);
-      statusMessage(status, 'Failed to load model. Check the console for details.', true);
-    }
-  });
+  setupDragAndDrop(viewport, handleFile);
 
   refreshPanel();
   void restorePersistedModels();
+
+  if (allowTapImport) {
+    const action = document.createElement('button');
+    action.type = 'button';
+    action.className = 'drop-action';
+    action.textContent = 'CHOOSE MODEL';
+    action.addEventListener('click', () => filePicker.click());
+    overlay.appendChild(action);
+    overlay.classList.add('drop-message-action');
+  }
 }
 
 function setupLights(scene: Scene): void {
@@ -310,46 +352,6 @@ function setupDragAndDrop(container: HTMLElement, onFile: (file: File) => void):
 
   window.addEventListener('dragover', preventDefaults);
   window.addEventListener('drop', preventDefaults);
-}
-
-async function loadGltfFromFile(loader: GLTFLoader, file: File, onLoad: (gltf: GLTF) => void): Promise<void> {
-  const objectUrl = URL.createObjectURL(file);
-  try {
-    await loadGltfFromUrl(loader, objectUrl, onLoad);
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
-}
-
-async function loadGltfFromDataUrl(
-  loader: GLTFLoader,
-  dataUrl: string,
-  onLoad: (gltf: GLTF) => void
-): Promise<void> {
-  const response = await fetch(dataUrl);
-  const blob = await response.blob();
-  const objectUrl = URL.createObjectURL(blob);
-  try {
-    await loadGltfFromUrl(loader, objectUrl, onLoad);
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
-}
-
-function loadGltfFromUrl(loader: GLTFLoader, url: string, onLoad: (gltf: GLTF) => void): Promise<void> {
-  return new Promise((resolve, reject) => {
-    loader.load(
-      url,
-      (gltf) => {
-        onLoad(gltf);
-        resolve();
-      },
-      undefined,
-      (error) => {
-        reject(error);
-      }
-    );
-  });
 }
 
 function fitCameraToObject(camera: PerspectiveCamera, controls: OrbitControls, object: Object3D): void {
@@ -701,6 +703,134 @@ function syncUnloadGuard(shouldWarn: boolean): void {
     window.removeEventListener('beforeunload', beforeUnloadHandler);
     unloadGuardActive = false;
   }
+}
+
+function createFilePicker(onFile: (file: File) => void): HTMLInputElement {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = [
+    '.glb',
+    '.gltf',
+    '.obj',
+    '.stl',
+    '.ply',
+    'model/gltf-binary',
+    'model/gltf+json',
+    'model/stl',
+    'model/obj'
+  ].join(',');
+  input.style.display = 'none';
+  input.addEventListener('change', () => {
+    const file = input.files?.[0];
+    if (file) {
+      onFile(file);
+    }
+    input.value = '';
+  });
+  return input;
+}
+
+function supportsTapImport(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  const nav = window.navigator;
+  const coarse = window.matchMedia
+    ? window.matchMedia('(pointer: coarse)').matches
+    : false;
+  return (
+    coarse ||
+    'ontouchstart' in window ||
+    (nav && typeof nav.maxTouchPoints === 'number' && nav.maxTouchPoints > 0)
+  );
+}
+
+type ModelLoader = {
+  extensions: string[];
+  loadFromFile: (file: File) => Promise<Object3D>;
+  loadFromDataUrl: (name: string, dataUrl: string) => Promise<Object3D>;
+};
+
+function createGltfModelLoader(loader: GLTFLoader): ModelLoader {
+  const loadScene = (url: string) => loader.loadAsync(url).then((gltf) => gltf.scene);
+  return {
+    extensions: ['.glb', '.gltf'],
+    loadFromFile: (file) => withObjectUrl(file, loadScene),
+    loadFromDataUrl: (_, dataUrl) => withDataUrl(dataUrl, loadScene)
+  };
+}
+
+function createObjModelLoader(loader: OBJLoader): ModelLoader {
+  const loadScene = (url: string) => loader.loadAsync(url);
+  return {
+    extensions: ['.obj'],
+    loadFromFile: (file) => withObjectUrl(file, loadScene),
+    loadFromDataUrl: (_, dataUrl) => withDataUrl(dataUrl, loadScene)
+  };
+}
+
+function createStlModelLoader(loader: STLLoader): ModelLoader {
+  const loadMesh = async (url: string) => {
+    const geometry = await loader.loadAsync(url);
+    geometry.computeVertexNormals();
+    return new Mesh(geometry, createSolidMaterial());
+  };
+  return {
+    extensions: ['.stl'],
+    loadFromFile: (file) => withObjectUrl(file, loadMesh),
+    loadFromDataUrl: (_, dataUrl) => withDataUrl(dataUrl, loadMesh)
+  };
+}
+
+function createPlyModelLoader(loader: PLYLoader): ModelLoader {
+  const loadMesh = async (url: string) => {
+    const geometry = await loader.loadAsync(url);
+    geometry.computeVertexNormals?.();
+    return new Mesh(geometry, createSolidMaterial());
+  };
+  return {
+    extensions: ['.ply'],
+    loadFromFile: (file) => withObjectUrl(file, loadMesh),
+    loadFromDataUrl: (_, dataUrl) => withDataUrl(dataUrl, loadMesh)
+  };
+}
+
+async function withObjectUrl<T>(file: File, load: (url: string) => Promise<T>): Promise<T> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    return await load(objectUrl);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function withDataUrl<T>(dataUrl: string, load: (url: string) => Promise<T>): Promise<T> {
+  if (dataUrl.startsWith('blob:') || dataUrl.startsWith('http')) {
+    return load(dataUrl);
+  }
+  const response = await fetch(dataUrl);
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    return await load(objectUrl);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function findModelLoader(loaders: ModelLoader[], fileName: string): ModelLoader | undefined {
+  const lower = fileName.toLowerCase();
+  return loaders.find((loader) =>
+    loader.extensions.some((ext) => lower.endsWith(ext))
+  );
+}
+
+function createSolidMaterial(): MeshStandardMaterial {
+  return new MeshStandardMaterial({
+    color: 0xcfd8dc,
+    metalness: 0.1,
+    roughness: 0.8
+  });
 }
 
 function ensureWireframeOverlay(mesh: any): void {
