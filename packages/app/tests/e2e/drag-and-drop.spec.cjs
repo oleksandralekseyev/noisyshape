@@ -33,6 +33,32 @@ test.describe('Drag-and-drop viewer', () => {
     const centerPixel = await sampleCenterPixel(page);
     expect(isCloseToBackground(centerPixel)).toBe(false);
 
+    await expect(page.locator('.model-item')).toHaveCount(1);
+
+    const modelStates = await getModelStates(page);
+    expect(modelStates[0].visible).toBe(true);
+    expect(modelStates[0].wireframe).toBe(false);
+
+    const modelItem = page.locator('.model-item').first();
+    const visibleToggle = modelItem.locator('input[data-role="visible-toggle"]');
+    const wireframeToggle = modelItem.locator('input[data-role="wireframe-toggle"]');
+
+    await visibleToggle.uncheck();
+    let updatedStates = await getModelStates(page);
+    expect(updatedStates[0].visible).toBe(false);
+
+    await visibleToggle.check();
+    updatedStates = await getModelStates(page);
+    expect(updatedStates[0].visible).toBe(true);
+
+    await wireframeToggle.check();
+    updatedStates = await getModelStates(page);
+    expect(updatedStates[0].wireframe).toBe(true);
+
+    await wireframeToggle.uncheck();
+    updatedStates = await getModelStates(page);
+    expect(updatedStates[0].wireframe).toBe(false);
+
     await page.reload();
     await expect(page.locator('.drop-message')).toHaveClass(/hidden/);
     await expect(page.locator('.status')).toHaveClass(/is-empty/);
@@ -104,6 +130,10 @@ async function getCameraState(page) {
 
 async function getMaterialStates(page) {
   return page.evaluate(() => window.__NOISYSHAPE_DEBUG?.getMaterialStates() ?? []);
+}
+
+async function getModelStates(page) {
+  return page.evaluate(() => window.__NOISYSHAPE_DEBUG?.getModelStates?.() ?? []);
 }
 
 async function sampleCenterPixel(page) {

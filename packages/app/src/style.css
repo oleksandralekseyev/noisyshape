@@ -29,8 +29,13 @@ body,
   position: absolute;
   inset: 0;
   display: flex;
-  justify-content: center;
-  align-items: center;
+  color: inherit;
+}
+
+.viewport {
+  position: relative;
+  flex: 1;
+  height: 100%;
 }
 
 .viewer canvas {
@@ -95,4 +100,73 @@ body,
 .status.is-empty {
   opacity: 0;
   transform: translate(-50%, 10px);
+}
+
+.sidebar {
+  width: 260px;
+  background: rgba(5, 7, 11, 0.92);
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 4;
+}
+
+.panel-header {
+  font-size: 0.95rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.model-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.model-empty {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.model-item {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(10, 13, 19, 0.8);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.model-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.9);
+  word-break: break-all;
+}
+
+.model-controls {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle input {
+  accent-color: #1f6feb;
+  cursor: pointer;
 }

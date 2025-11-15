@@ -25,23 +25,32 @@ export function createViewer(root: HTMLElement): void {
   host.className = 'viewer';
   root.appendChild(host);
 
+  const viewport = document.createElement('div');
+  viewport.className = 'viewport';
+  host.appendChild(viewport);
+
   const overlay = createOverlay('Drop 3D Models');
   const status = createStatus('Drop a .glb or .gltf file');
-  host.append(overlay, status);
+  viewport.append(overlay, status);
 
   const renderer = new WebGLRenderer({ antialias: true, alpha: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(host.clientWidth, host.clientHeight);
+  renderer.setSize(viewport.clientWidth, viewport.clientHeight);
   renderer.outputColorSpace = SRGBColorSpace;
   renderer.toneMapping = ACESFilmicToneMapping;
   renderer.domElement.style.width = '100%';
   renderer.domElement.style.height = '100%';
-  host.appendChild(renderer.domElement);
+  viewport.appendChild(renderer.domElement);
 
   const scene = new Scene();
   scene.background = new Color('#05070b');
 
-  const camera = new PerspectiveCamera(45, host.clientWidth / host.clientHeight, 0.1, 1000);
+  const camera = new PerspectiveCamera(
+    45,
+    viewport.clientWidth / viewport.clientHeight,
+    0.1,
+    1000
+  );
   camera.position.set(4, 3, 6);
 
   const controls = new OrbitControls(camera, renderer.domElement);
@@ -57,7 +66,7 @@ export function createViewer(root: HTMLElement): void {
   scene.add(grid);
 
   const loader = new GLTFLoader();
-  let currentModel: Object3D | null = null;
+  const models: ModelEntry[] = [];
   let hasLoadedModel = false;
 
   const animate = () => {
@@ -69,7 +78,7 @@ export function createViewer(root: HTMLElement): void {
   animate();
 
   const handleResize = () => {
-    const { clientWidth, clientHeight } = host;
+    const { clientWidth, clientHeight } = viewport;
     renderer.setSize(clientWidth, clientHeight);
     camera.aspect = clientWidth / clientHeight;
     camera.updateProjectionMatrix();
@@ -77,16 +86,44 @@ export function createViewer(root: HTMLElement): void {
 
   window.addEventListener('resize', handleResize);
 
-  const applyModel = (gltf: GLTF) => {
-    if (currentModel) {
-      scene.remove(currentModel);
+  const panel = createModelPanel({
+    onVisibilityChange: (id, visible) => {
+      const entry = models.find((model) => model.id === id);
+      if (!entry) return;
+      setModelVisibility(entry, visible);
+      refreshPanel();
+    },
+    onWireframeChange: (id, wireframe) => {
+      const entry = models.find((model) => model.id === id);
+      if (!entry) return;
+      setModelWireframe(entry, wireframe);
+      refreshPanel();
     }
+  });
+  host.appendChild(panel.element);
 
-    currentModel = gltf.scene;
+  const refreshPanel = () => {
+    panel.render(models);
+    updateModelDebugState(models);
+  };
+
+  const applyModel = (gltf: GLTF, meta: { name: string }) => {
     scene.add(gltf.scene);
+
+    const entry: ModelEntry = {
+      id: createModelId(),
+      name: meta.name,
+      object: gltf.scene,
+      visible: true,
+      wireframe: false
+    };
+    models.push(entry);
 
     fitCameraToObject(camera, controls, gltf.scene);
     lastMaterialStates = collectMaterialStates(gltf.scene);
+    setModelWireframe(entry, false);
+    setModelVisibility(entry, true);
+    refreshPanel();
 
     if (!hasLoadedModel) {
       hasLoadedModel = true;
@@ -104,7 +141,9 @@ export function createViewer(root: HTMLElement): void {
 
     statusMessage(status, `Restoring ${stored.name}…`);
     try {
-      await loadGltfFromDataUrl(loader, stored.dataUrl, applyModel);
+      await loadGltfFromDataUrl(loader, stored.dataUrl, (gltf) =>
+        applyModel(gltf, { name: stored.name })
+      );
       statusMessage(status, '');
     } catch (error) {
       console.error('Failed to restore persisted model', error);
@@ -113,7 +152,7 @@ export function createViewer(root: HTMLElement): void {
     }
   };
 
-  setupDragAndDrop(host, async (file) => {
+  setupDragAndDrop(viewport, async (file) => {
     if (!isSupported(file.name)) {
       statusMessage(status, 'Unsupported file. Use .glb or .gltf', true);
       return;
@@ -122,7 +161,7 @@ export function createViewer(root: HTMLElement): void {
     statusMessage(status, `Loading ${file.name}…`);
 
     try {
-      await loadGltfFromFile(loader, file, applyModel);
+      await loadGltfFromFile(loader, file, (gltf) => applyModel(gltf, { name: file.name }));
       void persistModel(file);
     } catch (error) {
       console.error(error);
@@ -130,6 +169,7 @@ export function createViewer(root: HTMLElement): void {
     }
   });
 
+  refreshPanel();
   void restorePersistedModel();
 }
 
@@ -181,7 +221,10 @@ function setupDragAndDrop(container: HTMLElement, onFile: (file: File) => void):
 
   const toggleSurface = (active: boolean) => {
     dropSurface.classList.toggle('dragging', active);
+    dropSurface.style.pointerEvents = active ? 'auto' : 'none';
   };
+
+  toggleSurface(false);
 
   const preventDefaults = (event: DragEvent) => {
     event.preventDefault();
@@ -320,7 +363,8 @@ function exposeDebugInterface(camera: PerspectiveCamera, controls: OrbitControls
       position: camera.position.toArray() as [number, number, number],
       target: controls.target.toArray() as [number, number, number]
     }),
-    getMaterialStates: () => lastMaterialStates
+    getMaterialStates: () => lastMaterialStates,
+    getModelStates: () => []
   };
 }
 
@@ -329,6 +373,12 @@ declare global {
     __NOISYSHAPE_DEBUG?: {
       getCameraState: () => CameraState;
       getMaterialStates: () => MaterialState[];
+      getModelStates: () => Array<{
+        id: string;
+        name: string;
+        visible: boolean;
+        wireframe: boolean;
+      }>;
     };
   }
 }
@@ -338,6 +388,7 @@ type MaterialState = {
   transparent: boolean;
   opacity: number;
   depthWrite: boolean;
+  wireframe: boolean;
 };
 
 function collectMaterialStates(object: Object3D): MaterialState[] {
@@ -350,12 +401,138 @@ function collectMaterialStates(object: Object3D): MaterialState[] {
           name: mat.name || child.name,
           transparent: Boolean(mat.transparent),
           opacity: 'opacity' in mat ? (mat.opacity as number) : 1,
-          depthWrite: 'depthWrite' in mat ? Boolean(mat.depthWrite) : true
+          depthWrite: 'depthWrite' in mat ? Boolean(mat.depthWrite) : true,
+          wireframe: 'wireframe' in mat ? Boolean(mat.wireframe) : false
         });
       });
     }
   });
   return materials;
+}
+
+type ModelEntry = {
+  id: string;
+  name: string;
+  object: Object3D;
+  visible: boolean;
+  wireframe: boolean;
+};
+
+type ModelPanelHandlers = {
+  onVisibilityChange: (id: string, visible: boolean) => void;
+  onWireframeChange: (id: string, wireframe: boolean) => void;
+};
+
+function createModelPanel(handlers: ModelPanelHandlers) {
+  const sidebar = document.createElement('div');
+  sidebar.className = 'sidebar';
+
+  const header = document.createElement('div');
+  header.className = 'panel-header';
+  header.textContent = 'Models';
+
+  const list = document.createElement('div');
+  list.className = 'model-list';
+
+  sidebar.append(header, list);
+
+  const render = (models: ModelEntry[]) => {
+    list.innerHTML = '';
+
+    if (models.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'model-empty';
+      empty.textContent = 'Drop models to populate the list.';
+      list.appendChild(empty);
+      return;
+    }
+
+    models.forEach((model) => {
+      const item = document.createElement('div');
+      item.className = 'model-item';
+      item.dataset.id = model.id;
+
+      const name = document.createElement('div');
+      name.className = 'model-name';
+      name.textContent = model.name;
+
+      const controls = document.createElement('div');
+      controls.className = 'model-controls';
+
+      const visibleLabel = document.createElement('label');
+      visibleLabel.className = 'toggle';
+      const visibleInput = document.createElement('input');
+      visibleInput.type = 'checkbox';
+      visibleInput.checked = model.visible;
+      visibleInput.dataset.role = 'visible-toggle';
+      visibleInput.addEventListener('change', () =>
+        handlers.onVisibilityChange(model.id, visibleInput.checked)
+      );
+      visibleLabel.append(visibleInput, document.createTextNode(' Visible'));
+
+      const wireLabel = document.createElement('label');
+      wireLabel.className = 'toggle';
+      const wireInput = document.createElement('input');
+      wireInput.type = 'checkbox';
+      wireInput.checked = model.wireframe;
+      wireInput.dataset.role = 'wireframe-toggle';
+      wireInput.addEventListener('change', () =>
+        handlers.onWireframeChange(model.id, wireInput.checked)
+      );
+      wireLabel.append(wireInput, document.createTextNode(' Wireframe'));
+
+      controls.append(visibleLabel, wireLabel);
+
+      item.append(name, controls);
+      list.appendChild(item);
+    });
+  };
+
+  return {
+    element: sidebar,
+    render
+  };
+}
+
+function setModelVisibility(entry: ModelEntry, visible: boolean): void {
+  entry.visible = visible;
+  entry.object.visible = visible;
+}
+
+function setModelWireframe(entry: ModelEntry, wireframe: boolean): void {
+  entry.wireframe = wireframe;
+  entry.object.traverse((child) => {
+    const mesh = child as any;
+    if (!mesh.isMesh) {
+      return;
+    }
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    materials.forEach((material) => {
+      if (material && 'wireframe' in material) {
+        material.wireframe = wireframe;
+      }
+    });
+  });
+}
+
+function createModelId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return `model-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
+}
+
+function updateModelDebugState(models: ModelEntry[]): void {
+  if (typeof window === 'undefined' || !window.__NOISYSHAPE_DEBUG) {
+    return;
+  }
+  window.__NOISYSHAPE_DEBUG.getModelStates = () =>
+    models.map((model) => ({
+      id: model.id,
+      name: model.name,
+      visible: model.visible,
+      wireframe: model.wireframe
+    }));
 }
 
 export {};
