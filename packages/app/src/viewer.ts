@@ -5,12 +5,15 @@ import {
   Color,
   DirectionalLight,
   GridHelper,
+  LineBasicMaterial,
+  LineSegments,
   Object3D,
   PerspectiveCamera,
   Scene,
   SRGBColorSpace,
   Vector3,
-  WebGLRenderer
+  WebGLRenderer,
+  WireframeGeometry
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -104,6 +107,7 @@ export function createViewer(root: HTMLElement): void {
 
   const refreshPanel = () => {
     panel.render(models);
+    panel.setVisible(models.length > 0);
     updateModelDebugState(models);
   };
 
@@ -490,13 +494,17 @@ function createModelPanel(handlers: ModelPanelHandlers) {
 
   return {
     element: sidebar,
-    render
+    render,
+    setVisible: (visible: boolean) => {
+      sidebar.classList.toggle('sidebar-hidden', !visible);
+    }
   };
 }
 
 function setModelVisibility(entry: ModelEntry, visible: boolean): void {
   entry.visible = visible;
   entry.object.visible = visible;
+  updateWireframeOverlays(entry);
 }
 
 function setModelWireframe(entry: ModelEntry, wireframe: boolean): void {
@@ -506,13 +514,9 @@ function setModelWireframe(entry: ModelEntry, wireframe: boolean): void {
     if (!mesh.isMesh) {
       return;
     }
-    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    materials.forEach((material) => {
-      if (material && 'wireframe' in material) {
-        material.wireframe = wireframe;
-      }
-    });
+    ensureWireframeOverlay(mesh);
   });
+  updateWireframeOverlays(entry);
 }
 
 function createModelId(): string {
@@ -533,6 +537,34 @@ function updateModelDebugState(models: ModelEntry[]): void {
       visible: model.visible,
       wireframe: model.wireframe
     }));
+}
+
+function ensureWireframeOverlay(mesh: any): void {
+  let overlay = mesh.children?.find(
+    (child: any) => child.userData?.wireframeOverlay === true
+  );
+  if (!overlay) {
+    const geometry = new WireframeGeometry(mesh.geometry);
+    const material = new LineBasicMaterial({ color: 0x000000 });
+    overlay = new LineSegments(geometry, material);
+    overlay.userData.wireframeOverlay = true;
+    overlay.visible = false;
+    mesh.add(overlay);
+  }
+}
+
+function updateWireframeOverlays(entry: ModelEntry): void {
+  entry.object.traverse((child) => {
+    const mesh = child as any;
+    if (!mesh.isMesh) {
+      return;
+    }
+    mesh.children?.forEach((childMesh: any) => {
+      if (childMesh.userData?.wireframeOverlay) {
+        childMesh.visible = entry.wireframe && entry.visible;
+      }
+    });
+  });
 }
 
 export {};

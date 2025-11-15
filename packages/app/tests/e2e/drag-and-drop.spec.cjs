@@ -11,6 +11,8 @@ test.describe('Drag-and-drop viewer', () => {
 
     const overlay = page.locator('.drop-message');
     await expect(overlay).toBeVisible();
+    await expectSidebarHidden(page, true);
+    await expectDropMessageCentered(page);
 
     await dropCube(page);
 
@@ -34,6 +36,7 @@ test.describe('Drag-and-drop viewer', () => {
     expect(isCloseToBackground(centerPixel)).toBe(false);
 
     await expect(page.locator('.model-item')).toHaveCount(1);
+    await expectSidebarHidden(page, false);
 
     const modelStates = await getModelStates(page);
     expect(modelStates[0].visible).toBe(true);
@@ -63,6 +66,7 @@ test.describe('Drag-and-drop viewer', () => {
     await expect(page.locator('.drop-message')).toHaveClass(/hidden/);
     await expect(page.locator('.status')).toHaveClass(/is-empty/);
     await expect(page.locator('canvas')).toBeVisible();
+    await expectSidebarHidden(page, false);
   });
 
   test('camera supports orbit, pan, and zoom interactions', async ({ page }) => {
@@ -134,6 +138,35 @@ async function getMaterialStates(page) {
 
 async function getModelStates(page) {
   return page.evaluate(() => window.__NOISYSHAPE_DEBUG?.getModelStates?.() ?? []);
+}
+
+async function expectSidebarHidden(page, hidden) {
+  const sidebar = page.locator('.sidebar');
+  if (hidden) {
+    await expect(sidebar).toHaveClass(/sidebar-hidden/);
+  } else {
+    await expect(sidebar).not.toHaveClass(/sidebar-hidden/);
+  }
+}
+
+async function expectDropMessageCentered(page) {
+  const viewportBox = await page.locator('.viewport').boundingBox();
+  const overlayBox = await page.locator('.drop-message').boundingBox();
+  if (!viewportBox || !overlayBox) {
+    throw new Error('Unable to measure viewport/drop message');
+  }
+  const viewportCenter = {
+    x: viewportBox.x + viewportBox.width / 2,
+    y: viewportBox.y + viewportBox.height / 2
+  };
+  const overlayCenter = {
+    x: overlayBox.x + overlayBox.width / 2,
+    y: overlayBox.y + overlayBox.height / 2
+  };
+  const dx = Math.abs(viewportCenter.x - overlayCenter.x);
+  const dy = Math.abs(viewportCenter.y - overlayCenter.y);
+  expect(dx).toBeLessThan(5);
+  expect(dy).toBeLessThan(5);
 }
 
 async function sampleCenterPixel(page) {
