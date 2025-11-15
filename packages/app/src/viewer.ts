@@ -17,7 +17,12 @@ import {
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { clearPersistedModel, getPersistedModel, persistModel } from './modelStorage';
+import {
+  clearPersistedModels,
+  getPersistedModels,
+  persistModel,
+  type StoredModel
+} from './modelStorage';
 
 const SUPPORTED_EXTENSIONS = ['.glb', '.gltf'];
 
@@ -137,23 +142,29 @@ export function createViewer(root: HTMLElement): void {
     statusMessage(status, '');
   };
 
-  const restorePersistedModel = async () => {
-    const stored = getPersistedModel();
-    if (!stored) {
+  const restorePersistedModels = async () => {
+    const stored = getPersistedModels();
+    if (stored.length === 0) {
       return;
     }
 
-    statusMessage(status, `Restoring ${stored.name}…`);
     try {
-      await loadGltfFromDataUrl(loader, stored.dataUrl, (gltf) =>
-        applyModel(gltf, { name: stored.name })
-      );
+      for (const entry of stored) {
+        await restoreEntry(entry);
+      }
       statusMessage(status, '');
     } catch (error) {
-      console.error('Failed to restore persisted model', error);
-      clearPersistedModel();
-      statusMessage(status, 'Failed to restore last model', true);
+      console.error('Failed to restore persisted models', error);
+      clearPersistedModels();
+      statusMessage(status, 'Failed to restore previous models', true);
     }
+  };
+
+  const restoreEntry = async (entry: StoredModel) => {
+    statusMessage(status, `Restoring ${entry.name}…`);
+    await loadGltfFromDataUrl(loader, entry.dataUrl, (gltf) =>
+      applyModel(gltf, { name: entry.name })
+    );
   };
 
   setupDragAndDrop(viewport, async (file) => {
@@ -174,7 +185,7 @@ export function createViewer(root: HTMLElement): void {
   });
 
   refreshPanel();
-  void restorePersistedModel();
+  void restorePersistedModels();
 }
 
 function setupLights(scene: Scene): void {

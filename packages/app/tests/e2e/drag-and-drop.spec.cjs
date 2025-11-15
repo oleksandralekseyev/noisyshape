@@ -7,7 +7,7 @@ const cubeFixture = path.resolve(__dirname, '../../public/samples/cube.gltf');
 
 test.describe('Drag-and-drop viewer', () => {
   test('loads cube, hides prompt, and persists after reload', async ({ page }) => {
-    await openFreshEditor(page);
+    await openEditor(page);
 
     const overlay = page.locator('.drop-message');
     await expect(overlay).toBeVisible();
@@ -69,8 +69,23 @@ test.describe('Drag-and-drop viewer', () => {
     await expectSidebarHidden(page, false);
   });
 
+  test('restores every loaded model after reload', async ({ page }) => {
+    await openEditor(page);
+
+    await dropCube(page, { fileName: 'first-model.gltf' });
+    await dropCube(page, { fileName: 'second-model.gltf' });
+    await expect(page.locator('.model-row')).toHaveCount(2);
+
+    await page.reload();
+    await expect(page.locator('.model-row')).toHaveCount(2);
+
+    const restored = await getModelStates(page);
+    const names = restored.map((model) => model.name).sort();
+    expect(names).toEqual(['first-model.gltf', 'second-model.gltf']);
+  });
+
   test('camera supports orbit, pan, and zoom interactions', async ({ page }) => {
-    await openFreshEditor(page);
+    await openEditor(page);
     await dropCube(page);
 
     const canvas = page.locator('canvas');
@@ -89,10 +104,41 @@ test.describe('Drag-and-drop viewer', () => {
     const zoomed = await getCameraState(page);
     expect(distance(zoomed)).toBeLessThan(distance(panned));
   });
+  test('reloads each tab with its own model state', async ({ context }) => {
+    const pageOne = await context.newPage();
+    await openEditor(pageOne);
+    await dropCube(pageOne, { fileName: 'tab-one-model.gltf' });
+    await expect(pageOne.locator('.model-row')).toHaveCount(1);
+    const firstStates = await getModelStates(pageOne);
+    expect(firstStates[0]?.name).toBe('tab-one-model.gltf');
+
+    const pageTwo = await context.newPage();
+    await openEditor(pageTwo, { clearStorage: false });
+    await dropCube(pageTwo, { fileName: 'tab-two-model.gltf' });
+    const secondStates = await getModelStates(pageTwo);
+    expect(secondStates.some((state) => state.name === 'tab-two-model.gltf')).toBe(
+      true
+    );
+
+    await pageOne.reload();
+    await expect(pageOne.locator('.model-row')).toHaveCount(1);
+    const reloadedFirst = await getModelStates(pageOne);
+    expect(reloadedFirst[0]?.name).toBe('tab-one-model.gltf');
+
+    await pageTwo.reload();
+    await expect(pageTwo.locator('.model-row')).toHaveCount(secondStates.length);
+    const reloadedSecond = await getModelStates(pageTwo);
+    const beforeNames = secondStates.map((state) => state.name).sort();
+    const afterNames = reloadedSecond.map((state) => state.name).sort();
+    expect(afterNames).toEqual(beforeNames);
+  });
 });
 
-async function openFreshEditor(page) {
+async function openEditor(page, options = {}) {
   await page.goto('/');
+  if (options.clearStorage === false) {
+    return;
+  }
   await page.evaluate(() => {
     localStorage.clear();
     sessionStorage.clear();
@@ -100,8 +146,8 @@ async function openFreshEditor(page) {
   await page.reload();
 }
 
-async function dropCube(page) {
-  const dataTransfer = await createDataTransfer(page, cubeFixture);
+async function dropCube(page, options = {}) {
+  const dataTransfer = await createDataTransfer(page, cubeFixture, options.fileName);
   const canvas = page.locator('canvas');
   await canvas.dispatchEvent('dragenter', { dataTransfer });
   await canvas.dispatchEvent('dragover', { dataTransfer });
@@ -109,8 +155,8 @@ async function dropCube(page) {
   await expect(page.locator('.drop-message')).toHaveClass(/hidden/);
 }
 
-async function createDataTransfer(page, filePath) {
-  const fileName = path.basename(filePath);
+async function createDataTransfer(page, filePath, fileNameOverride) {
+  const fileName = fileNameOverride ?? path.basename(filePath);
   const buffer = await fs.readFile(filePath);
 
   const payload = {
