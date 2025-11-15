@@ -144,6 +144,13 @@ test.describe('Drag-and-drop viewer', () => {
 
     await expect(page.locator('.drop-message')).toHaveClass(/hidden/);
     await expect(page.locator('.model-row')).toHaveCount(1);
+
+    const acceptAttr = await button.evaluate((el) => {
+      const input = document.querySelector('input[type="file"]');
+      return input?.getAttribute('accept');
+    });
+    expect(acceptAttr?.includes('application/sla')).toBe(true);
+    expect(acceptAttr?.includes('application/vnd.ms-pki.stl')).toBe(true);
   });
 
   test('new tabs start empty even when other tabs have models', async ({ context }) => {

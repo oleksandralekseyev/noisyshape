@@ -717,7 +717,10 @@ function createFilePicker(onFile: (file: File) => void): HTMLInputElement {
     'model/gltf-binary',
     'model/gltf+json',
     'model/stl',
-    'model/obj'
+    'model/obj',
+    'application/sla',
+    'application/vnd.ms-pki.stl',
+    'application/octet-stream'
   ].join(',');
   input.style.display = 'none';
   input.addEventListener('change', () => {
