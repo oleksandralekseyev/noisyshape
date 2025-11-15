@@ -27,6 +27,13 @@ import {
 const SUPPORTED_EXTENSIONS = ['.glb', '.gltf'];
 
 let lastMaterialStates: MaterialState[] = [];
+const UNLOAD_WARNING = 'You have models loaded. Leaving will lose them.';
+let unloadGuardActive = false;
+const beforeUnloadHandler = (event: BeforeUnloadEvent) => {
+  event.preventDefault();
+  event.returnValue = UNLOAD_WARNING;
+  return UNLOAD_WARNING;
+};
 
 export function createViewer(root: HTMLElement): void {
   const host = document.createElement('div');
@@ -114,6 +121,7 @@ export function createViewer(root: HTMLElement): void {
     panel.render(models);
     panel.setVisible(models.length > 0);
     updateModelDebugState(models);
+    syncUnloadGuard(models.length > 0);
   };
 
   const applyModel = (gltf: GLTF, meta: { name: string }) => {
@@ -379,7 +387,8 @@ function exposeDebugInterface(camera: PerspectiveCamera, controls: OrbitControls
       target: controls.target.toArray() as [number, number, number]
     }),
     getMaterialStates: () => lastMaterialStates,
-    getModelStates: () => []
+    getModelStates: () => [],
+    hasUnloadGuard: () => unloadGuardActive
   };
 }
 
@@ -394,6 +403,7 @@ declare global {
         visible: boolean;
         wireframe: boolean;
       }>;
+      hasUnloadGuard: () => boolean;
     };
   }
 }
@@ -678,6 +688,19 @@ function updateModelDebugState(models: ModelEntry[]): void {
       visible: model.visible,
       wireframe: model.wireframe
     }));
+}
+
+function syncUnloadGuard(shouldWarn: boolean): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  if (shouldWarn && !unloadGuardActive) {
+    window.addEventListener('beforeunload', beforeUnloadHandler);
+    unloadGuardActive = true;
+  } else if (!shouldWarn && unloadGuardActive) {
+    window.removeEventListener('beforeunload', beforeUnloadHandler);
+    unloadGuardActive = false;
+  }
 }
 
 function ensureWireframeOverlay(mesh: any): void {

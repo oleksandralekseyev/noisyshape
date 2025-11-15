@@ -75,6 +75,7 @@ test.describe('Drag-and-drop viewer', () => {
     await dropCube(page, { fileName: 'first-model.gltf' });
     await dropCube(page, { fileName: 'second-model.gltf' });
     await expect(page.locator('.model-row')).toHaveCount(2);
+    await expectUnloadGuard(page, true);
 
     await page.reload();
     await expect(page.locator('.model-row')).toHaveCount(2);
@@ -82,6 +83,38 @@ test.describe('Drag-and-drop viewer', () => {
     const restored = await getModelStates(page);
     const names = restored.map((model) => model.name).sort();
     expect(names).toEqual(['first-model.gltf', 'second-model.gltf']);
+    await expectUnloadGuard(page, true);
+  });
+
+  test('new tabs start empty even when other tabs have models', async ({ context }) => {
+    const pageOne = await context.newPage();
+    await openEditor(pageOne);
+    await dropCube(pageOne, { fileName: 'seed-model.gltf' });
+    await expect(pageOne.locator('.model-row')).toHaveCount(1);
+    await expectUnloadGuard(pageOne, true);
+
+    const pageTwo = await context.newPage();
+    await openEditor(pageTwo, { clearStorage: false });
+    await expect(pageTwo.locator('.model-row')).toHaveCount(0);
+    await expectUnloadGuard(pageTwo, false);
+  });
+
+  test('warns before closing when models exist', async ({ context }) => {
+    const guardedPage = await context.newPage();
+    await openEditor(guardedPage);
+    await dropCube(guardedPage, { fileName: 'guarded-model.gltf' });
+    await expectUnloadGuard(guardedPage, true);
+
+    const dialogHandled = new Promise((resolve) => {
+      guardedPage.once('dialog', async (dialog) => {
+        expect(dialog.type()).toBe('beforeunload');
+        await dialog.dismiss();
+        resolve(undefined);
+      });
+    });
+
+    await guardedPage.close({ runBeforeUnload: true });
+    await dialogHandled;
   });
 
   test('camera supports orbit, pan, and zoom interactions', async ({ page }) => {
@@ -184,6 +217,14 @@ async function getMaterialStates(page) {
 
 async function getModelStates(page) {
   return page.evaluate(() => window.__NOISYSHAPE_DEBUG?.getModelStates?.() ?? []);
+}
+
+async function hasUnloadGuard(page) {
+  return page.evaluate(() => window.__NOISYSHAPE_DEBUG?.hasUnloadGuard?.() ?? false);
+}
+
+async function expectUnloadGuard(page, active) {
+  await expect.poll(() => hasUnloadGuard(page)).toBe(active);
 }
 
 async function expectSidebarHidden(page, hidden) {

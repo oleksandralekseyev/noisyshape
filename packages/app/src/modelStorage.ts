@@ -1,4 +1,3 @@
-const LEGACY_STORAGE_KEY = 'noisyshape:last-model';
 const TAB_STORAGE_PREFIX = 'noisyshape:last-model:tab:';
 const TAB_ID_SESSION_KEY = 'noisyshape:tab-id';
 
@@ -20,36 +19,20 @@ export function persistModel(file: File): Promise<void> {
 }
 
 export function getPersistedModels(): StoredModel[] {
-  try {
-    const tabKey = getTabStorageKey();
-    const keysToCheck = tabKey ? [tabKey, LEGACY_STORAGE_KEY] : [LEGACY_STORAGE_KEY];
-    for (const key of keysToCheck) {
-      const models = readModelsForKey(key);
-      if (models.length === 0) {
-        continue;
-      }
-      if (key === LEGACY_STORAGE_KEY && tabKey) {
-        try {
-          writeModelsForKey(tabKey, models);
-        } catch (error) {
-          console.warn('Failed to backfill tab storage key', error);
-        }
-      }
-      return models;
-    }
-  } catch (error) {
-    console.warn('Failed to read persisted models', error);
+  const tabKey = getTabStorageKey();
+  if (!tabKey) {
+    return [];
   }
-  return [];
+  return readModelsForKey(tabKey);
 }
 
 export function clearPersistedModels(): void {
+  const tabKey = getTabStorageKey();
+  if (!tabKey) {
+    return;
+  }
   try {
-    const tabKey = getTabStorageKey();
-    if (tabKey) {
-      localStorage.removeItem(tabKey);
-    }
-    localStorage.removeItem(LEGACY_STORAGE_KEY);
+    localStorage.removeItem(tabKey);
   } catch (error) {
     console.warn('Failed to clear persisted models', error);
   }
@@ -81,24 +64,19 @@ function readModelsForKey(key: string): StoredModel[] {
 }
 
 function writeModels(models: PersistedPayload): void {
-  const serialized = models.length > 0 ? JSON.stringify(models) : null;
   const tabKey = getTabStorageKey();
-  if (tabKey) {
-    writeToKey(tabKey, serialized);
+  if (!tabKey) {
+    return;
   }
-  writeToKey(LEGACY_STORAGE_KEY, serialized);
-}
-
-function writeModelsForKey(key: string, models: PersistedPayload): void {
   const serialized = models.length > 0 ? JSON.stringify(models) : null;
-  writeToKey(key, serialized);
-}
-
-function writeToKey(key: string, serialized: string | null): void {
-  if (serialized === null) {
-    localStorage.removeItem(key);
-  } else {
-    localStorage.setItem(key, serialized);
+  try {
+    if (serialized === null) {
+      localStorage.removeItem(tabKey);
+    } else {
+      localStorage.setItem(tabKey, serialized);
+    }
+  } catch (error) {
+    console.warn('Failed to write persisted models', error);
   }
 }
 
