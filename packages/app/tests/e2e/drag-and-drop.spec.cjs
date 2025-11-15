@@ -72,6 +72,20 @@ test.describe('Drag-and-drop viewer', () => {
     await expectSidebarHidden(page, false);
   });
 
+  test('tools toggle shows floating tool panel', async ({ page }) => {
+    await openEditor(page);
+    const toggle = page.locator('.tools-toggle');
+    const panel = page.locator('.tools-panel');
+    await expect(toggle).toBeVisible();
+    await expect(panel).toHaveClass(/tools-hidden/);
+    await toggle.click();
+    await expect(panel).not.toHaveClass(/tools-hidden/);
+    await expect(panel.locator('.tools-button')).toHaveCount(3);
+    await expect(panel.locator('.tools-label')).toHaveText('Sculpt mode');
+    await toggle.click();
+    await expect(panel).toHaveClass(/tools-hidden/);
+  });
+
   test('restores every loaded model after reload', async ({ page }) => {
     await openEditor(page);
 
@@ -148,11 +162,11 @@ test.describe('Drag-and-drop viewer', () => {
     await expect(page.locator('.drop-message')).toHaveClass(/hidden/);
     await expect(page.locator('.model-row')).toHaveCount(1);
     await expect(button).not.toBeVisible();
-    const panelButton = page.locator('.panel-action button');
-    await expect(panelButton).toHaveText('LOAD MODEL');
     await expect(panelToggle).toBeEnabled();
     await expectSidebarHidden(page, true);
     await panelToggle.click();
+    const panelButton = page.locator('.panel-action button');
+    await expect(panelButton).toHaveText('LOAD MODEL');
     await expectSidebarHidden(page, false);
     await panelToggle.click();
     await expectSidebarHidden(page, true);
@@ -165,7 +179,8 @@ test.describe('Drag-and-drop viewer', () => {
     expect(acceptAttr?.includes('application/vnd.ms-pki.stl')).toBe(true);
 
     const secondChooserPromise = page.waitForEvent('filechooser');
-    await panelButton.click();
+    await panelToggle.click();
+    await page.locator('.panel-action button').click();
     const secondChooser = await secondChooserPromise;
     await secondChooser.setFiles(objFixture);
     await expect(page.locator('.model-row')).toHaveCount(2);

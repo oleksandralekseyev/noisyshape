@@ -285,6 +285,27 @@ export function createViewer(root: HTMLElement): void {
   refreshPanel();
   void restorePersistedModels();
 
+  const tools = [
+    { id: 'smooth', label: 'Smooth', icon: '/icons/smooth.svg' },
+    { id: 'add', label: 'Add', icon: '/icons/add.svg' },
+    { id: 'remove', label: 'Remove', icon: '/icons/remove.svg' }
+  ];
+  const toolsPanel = createToolsPanel(tools);
+  host.appendChild(toolsPanel.element);
+  let toolsOpen = false;
+  const toolsToggle = createToolsToggle(() => {
+    toolsOpen = !toolsOpen;
+    updateToolsVisibility();
+  });
+  host.appendChild(toolsToggle);
+
+  const updateToolsVisibility = () => {
+    toolsPanel.setVisible(toolsOpen);
+    toolsToggle.setAttribute('aria-expanded', String(toolsOpen));
+    toolsToggle.setAttribute('aria-label', toolsOpen ? 'Hide tools' : 'Show tools');
+  };
+  updateToolsVisibility();
+
 }
 
 function setupLights(scene: Scene): void {
@@ -671,6 +692,71 @@ function createIcon(variant: IconToggleVariant): SVGSVGElement {
   }
 
   return svg;
+}
+
+type ToolDescriptor = { id: string; label: string; icon: string };
+
+type ToolsPanel = {
+  element: HTMLElement;
+  setVisible: (visible: boolean) => void;
+};
+
+function createToolsPanel(tools: ToolDescriptor[]): ToolsPanel {
+  const panel = document.createElement('div');
+  panel.className = 'tools-panel tools-hidden';
+
+  const list = document.createElement('div');
+  list.className = 'tools-list';
+
+  const label = document.createElement('div');
+  label.className = 'tools-label';
+  label.textContent = 'Sculpt mode';
+
+  panel.append(list, label);
+
+  tools.forEach((tool) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'tools-button';
+    button.dataset.tool = tool.id;
+    button.setAttribute('aria-label', tool.label);
+    const img = document.createElement('img');
+    img.src = tool.icon;
+    img.alt = tool.label;
+    button.appendChild(img);
+    const setLabel = () => {
+      label.textContent = tool.label;
+    };
+    const resetLabel = () => {
+      label.textContent = 'Sculpt mode';
+    };
+    button.addEventListener('mouseenter', setLabel);
+    button.addEventListener('mouseleave', resetLabel);
+    button.addEventListener('focus', setLabel);
+    button.addEventListener('blur', resetLabel);
+    list.appendChild(button);
+  });
+
+  return {
+    element: panel,
+    setVisible: (visible: boolean) => {
+      panel.classList.toggle('tools-hidden', !visible);
+    }
+  };
+}
+
+function createToolsToggle(onToggle: () => void): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'tools-toggle';
+  button.setAttribute('aria-label', 'Show sculpt tools');
+  button.setAttribute('aria-expanded', 'false');
+  button.addEventListener('click', onToggle);
+  const icon = document.createElement('img');
+  icon.src = '/icons/sculpt.svg';
+  icon.alt = 'Sculpt';
+  button.appendChild(icon);
+  return button;
 }
 
 function getDisplayName(name: string): string {
