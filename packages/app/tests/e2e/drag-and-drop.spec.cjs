@@ -1,6 +1,7 @@
 const { test, expect } = require('@playwright/test');
 const path = require('node:path');
 const fs = require('node:fs/promises');
+const { PNG } = require('pngjs');
 
 const cubeFixture = path.resolve(__dirname, '../../public/samples/cube.gltf');
 
@@ -17,6 +18,20 @@ test.describe('Drag-and-drop viewer', () => {
     await expect(page.locator('.status')).toHaveText('');
     await expect(page.locator('.status')).toHaveClass(/is-empty/);
     await expect(page.locator('canvas')).toBeVisible();
+
+    const materials = await getMaterialStates(page);
+    expect(materials.length).toBeGreaterThan(0);
+    expect(
+      materials.every(
+        (mat) =>
+          mat.transparent === false &&
+          mat.opacity === 1 &&
+          mat.depthWrite === true
+      )
+    ).toBe(true);
+
+    const centerPixel = await sampleCenterPixel(page);
+    expect(isCloseToBackground(centerPixel)).toBe(false);
   });
 
   test('camera supports orbit, pan, and zoom interactions', async ({ page }) => {
@@ -71,6 +86,31 @@ async function createDataTransfer(page, filePath) {
 
 async function getCameraState(page) {
   return page.evaluate(() => window.__NOISYSHAPE_DEBUG?.getCameraState());
+}
+
+async function getMaterialStates(page) {
+  return page.evaluate(() => window.__NOISYSHAPE_DEBUG?.getMaterialStates() ?? []);
+}
+
+async function sampleCenterPixel(page) {
+  const screenshot = await page.screenshot();
+  const png = PNG.sync.read(screenshot);
+  const x = Math.floor(png.width / 2);
+  const y = Math.floor(png.height / 2);
+  const idx = (y * png.width + x) * 4;
+  const data = png.data;
+  return {
+    r: data[idx],
+    g: data[idx + 1],
+    b: data[idx + 2]
+  };
+}
+
+function isCloseToBackground({ r, g, b }) {
+  const bg = { r: 5, g: 7, b: 11 };
+  const diff =
+    Math.abs(r - bg.r) + Math.abs(g - bg.g) + Math.abs(b - bg.b);
+  return diff < 20;
 }
 
 async function orbit(page, canvas, delta) {

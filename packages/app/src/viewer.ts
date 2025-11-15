@@ -17,6 +17,8 @@ import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
 
 const SUPPORTED_EXTENSIONS = ['.glb', '.gltf'];
 
+let lastMaterialStates: MaterialState[] = [];
+
 export function createViewer(root: HTMLElement): void {
   const host = document.createElement('div');
   host.className = 'viewer';
@@ -92,6 +94,7 @@ export function createViewer(root: HTMLElement): void {
         scene.add(gltf.scene);
 
         fitCameraToObject(camera, controls, gltf.scene);
+        lastMaterialStates = collectMaterialStates(gltf.scene);
 
         if (!hasLoadedModel) {
           hasLoadedModel = true;
@@ -268,10 +271,12 @@ function exposeDebugInterface(camera: PerspectiveCamera, controls: OrbitControls
   }
 
   window.__NOISYSHAPE_DEBUG = {
+    ...window.__NOISYSHAPE_DEBUG,
     getCameraState: () => ({
       position: camera.position.toArray() as [number, number, number],
       target: controls.target.toArray() as [number, number, number]
-    })
+    }),
+    getMaterialStates: () => lastMaterialStates
   };
 }
 
@@ -279,8 +284,34 @@ declare global {
   interface Window {
     __NOISYSHAPE_DEBUG?: {
       getCameraState: () => CameraState;
+      getMaterialStates: () => MaterialState[];
     };
   }
+}
+
+type MaterialState = {
+  name: string;
+  transparent: boolean;
+  opacity: number;
+  depthWrite: boolean;
+};
+
+function collectMaterialStates(object: Object3D): MaterialState[] {
+  const materials: MaterialState[] = [];
+  object.traverse((child) => {
+    if ('material' in child && child.material) {
+      const mats = Array.isArray(child.material) ? child.material : [child.material];
+      mats.forEach((mat) => {
+        materials.push({
+          name: mat.name || child.name,
+          transparent: Boolean(mat.transparent),
+          opacity: 'opacity' in mat ? (mat.opacity as number) : 1,
+          depthWrite: 'depthWrite' in mat ? Boolean(mat.depthWrite) : true
+        });
+      });
+    }
+  });
+  return materials;
 }
 
 export {};

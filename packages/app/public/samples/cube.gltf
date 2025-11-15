@@ -24,9 +24,22 @@
             "POSITION": 0,
             "COLOR_0": 1
           },
-          "indices": 2
+          "indices": 2,
+          "material": 0
         }
       ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "SampleCubeMaterial",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [1, 1, 1, 1],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.85
+      },
+      "alphaMode": "OPAQUE",
+      "doubleSided": false
     }
   ],
   "accessors": [
