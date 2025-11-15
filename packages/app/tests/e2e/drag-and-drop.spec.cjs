@@ -43,9 +43,10 @@ test.describe('Drag-and-drop viewer', () => {
 
 async function dropCube(page) {
   const dataTransfer = await createDataTransfer(page, cubeFixture);
-  const dropSurface = page.locator('.drop-surface');
-  await dropSurface.dispatchEvent('dragenter', { dataTransfer });
-  await dropSurface.dispatchEvent('drop', { dataTransfer });
+  const canvas = page.locator('canvas');
+  await canvas.dispatchEvent('dragenter', { dataTransfer });
+  await canvas.dispatchEvent('dragover', { dataTransfer });
+  await canvas.dispatchEvent('drop', { dataTransfer });
   await expect(page.locator('.drop-message')).toHaveClass(/hidden/);
 }
 

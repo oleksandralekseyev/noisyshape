@@ -153,34 +153,49 @@ function setupDragAndDrop(container: HTMLElement, onFile: (file: File) => void):
   dropSurface.className = 'drop-surface';
   container.appendChild(dropSurface);
 
-  const setDropSurfaceActive = (active: boolean) => {
-    dropSurface.style.pointerEvents = active ? 'auto' : 'none';
-    if (!active) {
-      dropSurface.classList.remove('dragging');
-    }
+  const toggleSurface = (active: boolean) => {
+    dropSurface.classList.toggle('dragging', active);
   };
-
-  setDropSurfaceActive(false);
 
   const preventDefaults = (event: DragEvent) => {
     event.preventDefault();
     event.stopPropagation();
   };
 
-  const dragIn = (event: DragEvent) => {
+  const hasFiles = (event: DragEvent) =>
+    Array.from(event.dataTransfer?.types ?? []).includes('Files');
+
+  let dragDepth = 0;
+
+  const handleDragEnter = (event: DragEvent) => {
+    if (!hasFiles(event)) {
+      return;
+    }
+
     preventDefaults(event);
-    dropSurface.classList.add('dragging');
+    dragDepth += 1;
+    toggleSurface(true);
   };
 
-  const dragOut = (event: DragEvent) => {
+  const handleDragLeave = (event: DragEvent) => {
+    if (!hasFiles(event)) {
+      return;
+    }
+
     preventDefaults(event);
-    dropSurface.classList.remove('dragging');
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) {
+      toggleSurface(false);
+    }
   };
 
   const handleDrop = (event: DragEvent) => {
+    if (!hasFiles(event)) {
+      return;
+    }
+
     preventDefaults(event);
-    dropSurface.classList.remove('dragging');
-    setDropSurfaceActive(false);
+    toggleSurface(false);
     dragDepth = 0;
 
     const files = event.dataTransfer?.files;
@@ -191,42 +206,18 @@ function setupDragAndDrop(container: HTMLElement, onFile: (file: File) => void):
     onFile(files[0]);
   };
 
-  ['dragenter', 'dragover'].forEach((name) => dropSurface.addEventListener(name, dragIn));
-  dropSurface.addEventListener('dragleave', dragOut);
-  dropSurface.addEventListener('drop', handleDrop);
-
-  let dragDepth = 0;
-
-  const enableDrop = (event: DragEvent) => {
+  container.addEventListener('dragenter', handleDragEnter);
+  container.addEventListener('dragover', (event) => {
+    if (!hasFiles(event)) {
+      return;
+    }
     preventDefaults(event);
-    dragDepth += 1;
-    if (dragDepth === 1) {
-      setDropSurfaceActive(true);
-    }
-  };
+  });
+  container.addEventListener('dragleave', handleDragLeave);
+  container.addEventListener('drop', handleDrop);
 
-  const disableDrop = (event?: DragEvent) => {
-    if (event) {
-      preventDefaults(event);
-    }
-    dragDepth = 0;
-    setDropSurfaceActive(false);
-  };
-
-  window.addEventListener('dragenter', enableDrop);
   window.addEventListener('dragover', preventDefaults);
-  window.addEventListener('dragleave', (event) => {
-    preventDefaults(event);
-    dragDepth = Math.max(0, dragDepth - 1);
-    if (dragDepth === 0) {
-      setDropSurfaceActive(false);
-    }
-  });
-  window.addEventListener('dragend', disableDrop);
-  window.addEventListener('drop', (event) => {
-    preventDefaults(event);
-    disableDrop();
-  });
+  window.addEventListener('drop', preventDefaults);
 }
 
 function loadGltfFromFile(loader: GLTFLoader, file: File, onLoad: (gltf: GLTF) => void): Promise<void> {
