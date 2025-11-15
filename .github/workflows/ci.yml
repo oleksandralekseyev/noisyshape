@@ -31,5 +31,5 @@ jobs:
         run: pnpm exec playwright install --with-deps
         working-directory: packages/app
 
-      - name: Run e2e tests
-        run: pnpm --filter app test:e2e
+      - name: Run test suite
+        run: pnpm test

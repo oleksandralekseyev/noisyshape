@@ -48,11 +48,11 @@ pnpm install --filter app
 # Install browsers once per machine
 cd packages/app && pnpm exec playwright install
 
-# Run e2e tests (from repo root or packages/app)
-pnpm --filter app test:e2e
+# Run the entire suite (assets + e2e)
+pnpm test
 
-# Validate sample assets (ensures cube.gltf stays opaque)
-pnpm --filter app test:assets
+# Run only the app tests if needed
+pnpm --filter app test
 ```
 
 GitHub Actions (`.github/workflows/ci.yml`) runs the same suite on every push/PR, ensuring drag-and-drop continues to hide the prompt and display the model.
