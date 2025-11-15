@@ -4,7 +4,9 @@
 
 Search first, use the most standard and widely supported solution, and only propose features or architectures that respect the defaults of our frameworks and dependencies. If a feature needs unconventional behavior, revise the feature instead of bending the tools.
 
-Every feature must have an accompanying Markdown spec inside `docs/`; if a requirement shows up in a prompt without an existing doc, create or update the appropriate `docs/*.md` entry and treat it as the single source of truth for architecture. Every change must also include test coverage (or updates to existing tests) so CI reflects the intended behavior—no feature lands without passing automated tests.
+Every feature must have an accompanying Markdown spec inside `docs/`; if a requirement shows up in a prompt without an existing doc, create or update the appropriate `docs/*.md` entry and treat it as the single source of truth for architecture. 
+
+Every change must also include test coverage (or updates to existing tests) so CI reflects the intended behavior—no feature lands without passing automated tests.
 
 ## Project Structure & Module Organization
 
