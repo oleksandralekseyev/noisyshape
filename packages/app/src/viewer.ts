@@ -14,6 +14,7 @@ import {
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { clearPersistedModel, getPersistedModel, persistModel } from './modelStorage';
 
 const SUPPORTED_EXTENSIONS = ['.glb', '.gltf'];
 
@@ -76,6 +77,42 @@ export function createViewer(root: HTMLElement): void {
 
   window.addEventListener('resize', handleResize);
 
+  const applyModel = (gltf: GLTF) => {
+    if (currentModel) {
+      scene.remove(currentModel);
+    }
+
+    currentModel = gltf.scene;
+    scene.add(gltf.scene);
+
+    fitCameraToObject(camera, controls, gltf.scene);
+    lastMaterialStates = collectMaterialStates(gltf.scene);
+
+    if (!hasLoadedModel) {
+      hasLoadedModel = true;
+      hideOverlay(overlay);
+    }
+
+    statusMessage(status, '');
+  };
+
+  const restorePersistedModel = async () => {
+    const stored = getPersistedModel();
+    if (!stored) {
+      return;
+    }
+
+    statusMessage(status, `Restoring ${stored.name}…`);
+    try {
+      await loadGltfFromDataUrl(loader, stored.dataUrl, applyModel);
+      statusMessage(status, '');
+    } catch (error) {
+      console.error('Failed to restore persisted model', error);
+      clearPersistedModel();
+      statusMessage(status, 'Failed to restore last model', true);
+    }
+  };
+
   setupDragAndDrop(host, async (file) => {
     if (!isSupported(file.name)) {
       statusMessage(status, 'Unsupported file. Use .glb or .gltf', true);
@@ -85,29 +122,15 @@ export function createViewer(root: HTMLElement): void {
     statusMessage(status, `Loading ${file.name}…`);
 
     try {
-      await loadGltfFromFile(loader, file, (gltf) => {
-        if (currentModel) {
-          scene.remove(currentModel);
-        }
-
-        currentModel = gltf.scene;
-        scene.add(gltf.scene);
-
-        fitCameraToObject(camera, controls, gltf.scene);
-        lastMaterialStates = collectMaterialStates(gltf.scene);
-
-        if (!hasLoadedModel) {
-          hasLoadedModel = true;
-          hideOverlay(overlay);
-        }
-
-        statusMessage(status, '');
-      });
+      await loadGltfFromFile(loader, file, applyModel);
+      void persistModel(file);
     } catch (error) {
       console.error(error);
       statusMessage(status, 'Failed to load model. Check the console for details.', true);
     }
   });
+
+  void restorePersistedModel();
 }
 
 function setupLights(scene: Scene): void {
@@ -223,19 +246,40 @@ function setupDragAndDrop(container: HTMLElement, onFile: (file: File) => void):
   window.addEventListener('drop', preventDefaults);
 }
 
-function loadGltfFromFile(loader: GLTFLoader, file: File, onLoad: (gltf: GLTF) => void): Promise<void> {
+async function loadGltfFromFile(loader: GLTFLoader, file: File, onLoad: (gltf: GLTF) => void): Promise<void> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    await loadGltfFromUrl(loader, objectUrl, onLoad);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function loadGltfFromDataUrl(
+  loader: GLTFLoader,
+  dataUrl: string,
+  onLoad: (gltf: GLTF) => void
+): Promise<void> {
+  const response = await fetch(dataUrl);
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    await loadGltfFromUrl(loader, objectUrl, onLoad);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function loadGltfFromUrl(loader: GLTFLoader, url: string, onLoad: (gltf: GLTF) => void): Promise<void> {
   return new Promise((resolve, reject) => {
-    const objectUrl = URL.createObjectURL(file);
     loader.load(
-      objectUrl,
+      url,
       (gltf) => {
-        URL.revokeObjectURL(objectUrl);
         onLoad(gltf);
         resolve();
       },
       undefined,
       (error) => {
-        URL.revokeObjectURL(objectUrl);
         reject(error);
       }
     );

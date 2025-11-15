@@ -35,7 +35,7 @@ cd packages/app
 pnpm dev
 ```
 
-For a quick manual test, open the running app and drag `packages/app/public/samples/cube.gltf` into the viewport—the placeholder cube (each face colored differently) loads instantly and hides the “Drop 3D Models” prompt.
+For a quick manual test, open the running app and drag `packages/app/public/samples/cube.gltf` into the viewport—the placeholder cube (each face colored differently) loads instantly and hides the “Drop 3D Models” prompt. The editor persists the most recent model in `localStorage`, so refreshing the page restores it automatically.
 
 ## Testing
 

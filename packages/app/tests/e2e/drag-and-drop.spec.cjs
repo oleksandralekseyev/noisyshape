@@ -6,8 +6,8 @@ const { PNG } = require('pngjs');
 const cubeFixture = path.resolve(__dirname, '../../public/samples/cube.gltf');
 
 test.describe('Drag-and-drop viewer', () => {
-  test('loads cube and hides prompt after drop', async ({ page }) => {
-    await page.goto('/');
+  test('loads cube, hides prompt, and persists after reload', async ({ page }) => {
+    await openFreshEditor(page);
 
     const overlay = page.locator('.drop-message');
     await expect(overlay).toBeVisible();
@@ -32,10 +32,15 @@ test.describe('Drag-and-drop viewer', () => {
 
     const centerPixel = await sampleCenterPixel(page);
     expect(isCloseToBackground(centerPixel)).toBe(false);
+
+    await page.reload();
+    await expect(page.locator('.drop-message')).toHaveClass(/hidden/);
+    await expect(page.locator('.status')).toHaveClass(/is-empty/);
+    await expect(page.locator('canvas')).toBeVisible();
   });
 
   test('camera supports orbit, pan, and zoom interactions', async ({ page }) => {
-    await page.goto('/');
+    await openFreshEditor(page);
     await dropCube(page);
 
     const canvas = page.locator('canvas');
@@ -55,6 +60,15 @@ test.describe('Drag-and-drop viewer', () => {
     expect(distance(zoomed)).toBeLessThan(distance(panned));
   });
 });
+
+async function openFreshEditor(page) {
+  await page.goto('/');
+  await page.evaluate(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+  await page.reload();
+}
 
 async function dropCube(page) {
   const dataTransfer = await createDataTransfer(page, cubeFixture);
