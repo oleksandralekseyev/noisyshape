@@ -50,6 +50,14 @@ if (!hasOpaquePrimitive) {
   report('cube.gltf primitives must reference the declared material.');
 }
 
+const hasNormals = gltf.meshes?.some((mesh) =>
+  mesh.primitives?.some((primitive) => typeof primitive.attributes?.NORMAL === 'number')
+);
+
+if (!hasNormals) {
+  report('cube.gltf primitives must include NORMAL attributes.');
+}
+
 if (process.exitCode === 1) {
   process.exit();
 }
