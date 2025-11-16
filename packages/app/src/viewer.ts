@@ -37,10 +37,10 @@ import {
 } from './modelStorage';
 import {
   collectTrianglesWithinRadius,
+  type SculptHighlightData,
   type SculptWorkerBuildRequest,
   type SculptWorkerMeshPayload,
-  type SculptWorkerResponse,
-  type SerializedSculptTree
+  type SculptWorkerResponse
 } from './sculptStructures';
 
 const SUPPORTED_EXTENSIONS = ['.glb', '.gltf', '.obj', '.stl', '.ply'];
@@ -201,7 +201,7 @@ export function createViewer(root: HTMLElement): void {
     response.meshes.forEach((mesh) => {
       const binding = entry.sculpt.bindings.find((candidate) => candidate.mesh.uuid === mesh.meshId);
       if (binding) {
-        binding.tree = mesh.tree;
+        binding.highlightData = { centroids: mesh.centroids };
       }
     });
     entry.sculpt.preparing = false;
@@ -368,8 +368,7 @@ export function createViewer(root: HTMLElement): void {
       modelId: entry.id,
       meshes
     };
-    const transfers = meshes.flatMap((mesh) => [mesh.positions.buffer, mesh.indices.buffer]);
-    sculptWorker.postMessage(message, transfers);
+    sculptWorker.postMessage(message);
   };
 
   const applyModel = (object: Object3D, meta: { name: string }) => {
@@ -487,7 +486,7 @@ export function createViewer(root: HTMLElement): void {
       return;
     }
     const binding = sculptMeshLookup.get(mesh.uuid);
-    if (!binding || !binding.tree) {
+    if (!binding || !binding.highlightData) {
       hideSculptHighlight();
       return;
     }
@@ -505,7 +504,7 @@ export function createViewer(root: HTMLElement): void {
     const localPoint = hit.point.clone();
     mesh.worldToLocal(localPoint);
     const triangles = collectTrianglesWithinRadius(
-      binding.tree,
+      binding.highlightData,
       localPoint,
       radius,
       highlightTrianglesScratch
@@ -823,7 +822,7 @@ type MaterialState = {
 type SculptMeshBinding = {
   mesh: Mesh;
   geometry: BufferGeometry;
-  tree: SerializedSculptTree | null;
+  highlightData: SculptHighlightData | null;
   boundingRadius: number;
 };
 
@@ -1255,7 +1254,7 @@ function collectSculptMeshes(root: Object3D): SculptMeshBinding[] {
     bindings.push({
       mesh,
       geometry,
-      tree: null,
+      highlightData: null,
       boundingRadius: computeMeshBoundingRadius(mesh)
     });
   });

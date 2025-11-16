@@ -1,17 +1,6 @@
 import type { Vector3 } from 'three';
 
-export type SerializedSculptNode = {
-  min: [number, number, number];
-  max: [number, number, number];
-  start: number;
-  count: number;
-  left: number;
-  right: number;
-};
-
-export type SerializedSculptTree = {
-  nodes: SerializedSculptNode[];
-  order: Uint32Array;
+export type SculptHighlightData = {
   centroids: Float32Array;
 };
 
@@ -29,7 +18,7 @@ export type SculptWorkerBuildRequest = {
 
 export type SculptWorkerMeshResult = {
   meshId: string;
-  tree: SerializedSculptTree;
+  centroids: Float32Array;
 };
 
 export type SculptWorkerBuildResponse = {
@@ -49,81 +38,28 @@ export type SculptWorkerResponse =
   | SculptWorkerErrorResponse;
 
 export function collectTrianglesWithinRadius(
-  tree: SerializedSculptTree,
+  data: SculptHighlightData,
   point: Vector3,
   radius: number,
   output: number[]
 ): number[] {
   output.length = 0;
-  if (tree.nodes.length === 0 || radius <= 0) {
+  if (!data || radius <= 0) {
     return output;
   }
-  const stack: number[] = [0];
+  const centroids = data.centroids;
+  if (!centroids || centroids.length === 0) {
+    return output;
+  }
   const radiusSq = radius * radius;
-  const centroids = tree.centroids;
-  const order = tree.order;
-  while (stack.length > 0) {
-    const nodeIndex = stack.pop();
-    if (nodeIndex === undefined) {
-      continue;
-    }
-    const node = tree.nodes[nodeIndex];
-    if (!node) {
-      continue;
-    }
-    if (!aabbIntersectsSphere(node, point, radiusSq)) {
-      continue;
-    }
-    if (node.left !== -1) {
-      stack.push(node.left);
-    }
-    if (node.right !== -1) {
-      stack.push(node.right);
-    }
-    if (node.left === -1 && node.right === -1) {
-      const start = node.start;
-      const end = start + node.count;
-      for (let i = start; i < end; i += 1) {
-        const triIndex = order[i];
-        const centroidOffset = triIndex * 3;
-        const dx = point.x - centroids[centroidOffset];
-        const dy = point.y - centroids[centroidOffset + 1];
-        const dz = point.z - centroids[centroidOffset + 2];
-        const distSq = dx * dx + dy * dy + dz * dz;
-        if (distSq <= radiusSq) {
-          output.push(triIndex);
-        }
-      }
+  for (let i = 0; i < centroids.length; i += 3) {
+    const dx = point.x - centroids[i];
+    const dy = point.y - centroids[i + 1];
+    const dz = point.z - centroids[i + 2];
+    const distSq = dx * dx + dy * dy + dz * dz;
+    if (distSq <= radiusSq) {
+      output.push(i / 3);
     }
   }
   return output;
-}
-
-function aabbIntersectsSphere(
-  node: SerializedSculptNode,
-  point: Vector3,
-  radiusSq: number
-): boolean {
-  let distSq = 0;
-  const px = point.x;
-  const py = point.y;
-  const pz = point.z;
-  const min = node.min;
-  const max = node.max;
-  distSq += distanceToRange(px, min[0], max[0]);
-  distSq += distanceToRange(py, min[1], max[1]);
-  distSq += distanceToRange(pz, min[2], max[2]);
-  return distSq <= radiusSq;
-}
-
-function distanceToRange(value: number, min: number, max: number): number {
-  if (value < min) {
-    const delta = min - value;
-    return delta * delta;
-  }
-  if (value > max) {
-    const delta = value - max;
-    return delta * delta;
-  }
-  return 0;
 }

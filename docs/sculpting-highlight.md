@@ -17,25 +17,38 @@ be touched by the brush radius slider.
   tool is selected; moving the pointer away or hiding the controls removes the
   highlight.
 
-## Acceleration Structure
+## Highlight Data Preparation
 
-- Each mesh requires a helper tree to speed up triangle queries. Use a
-  straightforward KD-tree built from triangle centroids.
-- The KD-tree is created inside a dedicated worker as soon as a model loads.
-  The main thread sends the mesh positions, indices, and identifiers; the
-  worker responds with the serialized tree.
-- The worker result is cached per mesh (keyed by the mesh UUID). Pointer
-  queries traverse the KD-tree to collect candidate triangles before running
-  precise distance checks.
-- The same cached structure also reports whether a pointer press lands on the
-  mesh (we reuse the raycast hit and tree lookup to keep interactions
-  consistent).
+- Each mesh caches triangle centroids inside a flat `Float32Array`. The array
+  stores `x/y/z` triplets so the main thread can compute distances directly
+  without building custom KD or AABB trees.
+- Centroid generation still happens in a dedicated worker that starts as soon
+  as a model loads. The main thread sends mesh positions, indices, and
+  identifiers, then waits for the worker's response while the UI shows the
+  "Preparing sculpt data" chip.
+- The worker replies with serialized centroid arrays (one per mesh). We rely
+  on structured cloning instead of `SharedArrayBuffer` transfers so the app
+  stays compatible without requiring cross-origin isolation headers.
+- The cached centroid arrays are keyed by mesh UUID and power both highlighting
+  and pointer hit checks, ensuring sculpt interactions use a single source of
+  truth.
+
+## Radius Queries
+
+- When the pointer hovers over a mesh, the intersection point is converted to
+  local space and the highlight radius (slider value × mesh bounding radius) is
+  squared.
+- The cached centroid array is scanned linearly; any centroid whose squared
+  distance falls within the radius contributes its triangle index to the
+  highlight overlay.
+- This direct approach keeps the implementation simple and easy to audit while
+  still fulfilling the "instant feedback" requirement for typical asset sizes.
 
 ## Loading Animation
 
-- While the worker builds the KD-tree the associated mesh stays hidden and a
-  "Preparing sculpt data" chip with a looping spinner is displayed near the
-  sculpt toggle.
+- While the worker builds the centroid cache the associated mesh stays hidden
+  and a "Preparing sculpt data" chip with a looping spinner is displayed near
+  the sculpt toggle.
 - The animation is global: if any mesh is still preparing the indicator stays
   visible. Once all meshes finish, the chip fades out and the models become
   visible in the scene.
