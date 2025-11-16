@@ -21,6 +21,7 @@ import {
   WebGLRenderer,
   WireframeGeometry
 } from 'three';
+import type { Intersection } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
@@ -150,10 +151,11 @@ export function createViewer(root: HTMLElement): void {
   const models: ModelEntry[] = [];
   const raycaster = new Raycaster();
   const pointer = new Vector2();
-  const pickSceneIntersection = (ndcX: number, ndcY: number) => {
+  type SceneIntersection = Intersection<Object3D>;
+  const pickSceneIntersection = (ndcX: number, ndcY: number): SceneIntersection | null => {
     pointer.set(ndcX, ndcY);
     raycaster.setFromCamera(pointer, camera);
-    let closest: ReturnType<Raycaster['intersectObject']>[number] | null = null;
+    let closest: SceneIntersection | null = null;
     models.forEach((entry) => {
       if (!entry.visible || !entry.object.visible) {
         return;
@@ -617,15 +619,15 @@ function exposeDebugInterface(
 declare global {
   interface Window {
     __NOISYSHAPE_DEBUG?: {
-      getCameraState: () => CameraState;
-      getMaterialStates: () => MaterialState[];
-      getModelStates: () => Array<{
+      getCameraState?: () => CameraState;
+      getMaterialStates?: () => MaterialState[];
+      getModelStates?: () => Array<{
         id: string;
         name: string;
         visible: boolean;
         wireframe: boolean;
       }>;
-      hasUnloadGuard: () => boolean;
+      hasUnloadGuard?: () => boolean;
       hitTestViewport?: (x: number, y: number) => boolean;
       getActiveSculptTool?: () => string | null;
       scaleModel?: (id: string, scale: number) => void;
