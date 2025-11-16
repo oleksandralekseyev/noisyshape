@@ -14,7 +14,7 @@ The sculpting UI mirrors the models panel, but is intentionally lighter so it do
 ## Behavior Notes
 
 - The sculpt toggle is disabled until a model is loaded, mirroring the model panel behavior.
-- Tool icons remain visually neutral until touched, but selecting one collapses the list and swaps the sculpt toggle icon to the chosen tool so it behaves like a combo button.
+- Tool icons remain visually neutral until touched, but selecting one collapses the list and swaps the sculpt toggle icon to the chosen tool. Reopening the list temporarily restores the sculpt glyph so the toggle still reads as the entry point while browsing tools.
 - Once a tool is selected, a compact row of inline sliders (“Radius” and “Value”) appears to the right of the sculpt button while the tool list stays hidden. Each slider shows only its track line and label underneath—no live numeric readout—so the control feels lightweight.
 - Clicking the viewport outside of any loaded mesh automatically hides whichever sculpt element is active: if a tool is selected it resets to the default sculpt state and collapses the sliders, while an open tool list closes without selecting anything.
 - The design leaves room to expand with more tools or status indicators without changing the core UX pattern.

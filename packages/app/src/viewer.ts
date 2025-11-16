@@ -338,9 +338,10 @@ export function createViewer(root: HTMLElement): void {
   const toggleIcon = toolsToggle.querySelector('img');
   const updateToggleIcon = () => {
     if (!toggleIcon) return;
-    if (activeTool) {
-      toggleIcon.src = activeTool.icon;
-      toggleIcon.alt = activeTool.label;
+    const descriptor = !toolsOpen && activeTool ? activeTool : null;
+    if (descriptor) {
+      toggleIcon.src = descriptor.icon;
+      toggleIcon.alt = descriptor.label;
     } else {
       toggleIcon.src = '/icons/sculpt.svg';
       toggleIcon.alt = 'Sculpt';
@@ -356,6 +357,7 @@ export function createViewer(root: HTMLElement): void {
     toolsToggle.setAttribute('aria-expanded', String(toolsOpen));
     toolsToggle.setAttribute('aria-label', toolsOpen ? 'Hide sculpt tools' : 'Show sculpt tools');
     syncToolControls();
+    updateToggleIcon();
   };
   updateToolsVisibility();
   updateToggleIcon();

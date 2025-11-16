@@ -111,9 +111,11 @@ test.describe('Drag-and-drop viewer', () => {
     await toggle.click();
     await expect(panel).not.toHaveClass(/tools-hidden/);
     await expect(controls).toHaveClass(/tools-controls-hidden/);
+    await expect(toggleIcon).toHaveAttribute('src', /\/icons\/sculpt\.svg$/);
     await toggle.click();
     await expect(panel).toHaveClass(/tools-hidden/);
     await expect(controls).not.toHaveClass(/tools-controls-hidden/);
+    await expect(toggleIcon).toHaveAttribute('src', /\/icons\/smooth\.svg$/);
 
     await toggle.click();
     await expect(panel).not.toHaveClass(/tools-hidden/);
