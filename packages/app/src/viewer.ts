@@ -2,8 +2,11 @@ import {
   ACESFilmicToneMapping,
   AmbientLight,
   Box3,
+  BufferAttribute,
+  BufferGeometry,
   Color,
   DirectionalLight,
+  DoubleSide,
   GridHelper,
   LineBasicMaterial,
   LineSegments,
@@ -15,7 +18,6 @@ import {
   Raycaster,
   Scene,
   SRGBColorSpace,
-  SphereGeometry,
   Vector2,
   Vector3,
   WebGLRenderer,
@@ -33,6 +35,13 @@ import {
   persistModel,
   type StoredModel
 } from './modelStorage';
+import {
+  collectTrianglesWithinRadius,
+  type SculptWorkerBuildRequest,
+  type SculptWorkerMeshPayload,
+  type SculptWorkerResponse,
+  type SerializedSculptTree
+} from './sculptStructures';
 
 const SUPPORTED_EXTENSIONS = ['.glb', '.gltf', '.obj', '.stl', '.ply'];
 const normalizedBasePath = import.meta.env.BASE_URL.replace(/\/$/, '');
@@ -65,6 +74,17 @@ export function createViewer(root: HTMLElement): void {
   const overlay = createOverlay(allowTapImport ? '' : 'Drop 3D Models');
   const status = createStatus('Drop a .glb, .gltf, .obj, .stl, or .ply file');
   viewport.append(overlay, status);
+  const sculptWorker = new Worker(
+    new URL('./workers/sculptStructures.worker.ts', import.meta.url),
+    { type: 'module' }
+  );
+  const sculptMeshLookup = new Map<string, SculptMeshBinding>();
+  const pendingModelPreps = new Set<string>();
+  const sculptPrepIndicator = createSculptPrepIndicator();
+  host.appendChild(sculptPrepIndicator.element);
+  const updatePrepIndicator = () => {
+    sculptPrepIndicator.setActive(pendingModelPreps.size > 0);
+  };
   let panelActionButton: HTMLButtonElement | null = null;
   let overlayAction: HTMLButtonElement | null = null;
 
@@ -155,6 +175,48 @@ export function createViewer(root: HTMLElement): void {
   };
 
   const models: ModelEntry[] = [];
+  const handleSculptWorkerFailure = (modelId: string) => {
+    const entry = models.find((model) => model.id === modelId);
+    if (!entry) {
+      return;
+    }
+    entry.sculpt.preparing = false;
+    setModelVisibility(entry, entry.visible);
+    pendingModelPreps.delete(modelId);
+    updatePrepIndicator();
+  };
+  const handleSculptWorkerComplete = (response: SculptWorkerResponse) => {
+    if (response.type !== 'complete') {
+      if (response.type === 'error') {
+        console.error('Sculpt worker error', response.message);
+        statusMessage(status, response.message, true);
+        handleSculptWorkerFailure(response.modelId);
+      }
+      return;
+    }
+    const entry = models.find((model) => model.id === response.modelId);
+    if (!entry) {
+      return;
+    }
+    response.meshes.forEach((mesh) => {
+      const binding = entry.sculpt.bindings.find((candidate) => candidate.mesh.uuid === mesh.meshId);
+      if (binding) {
+        binding.tree = mesh.tree;
+      }
+    });
+    entry.sculpt.preparing = false;
+    entry.sculpt.ready = true;
+    setModelVisibility(entry, entry.visible);
+    pendingModelPreps.delete(entry.id);
+    updatePrepIndicator();
+  };
+  sculptWorker.addEventListener('message', (event) => {
+    const data = event.data as SculptWorkerResponse;
+    if (!data) {
+      return;
+    }
+    handleSculptWorkerComplete(data);
+  });
   const raycaster = new Raycaster();
   const pointer = new Vector2();
   type SceneIntersection = Intersection<Object3D>;
@@ -259,16 +321,75 @@ export function createViewer(root: HTMLElement): void {
     updatePanelVisibility();
   };
 
+  const createSculptMeshPayload = (binding: SculptMeshBinding): SculptWorkerMeshPayload => {
+    const geometry = binding.geometry;
+    const positionAttr = geometry.getAttribute('position') as BufferAttribute | undefined;
+    if (!positionAttr) {
+      throw new Error('Missing position attribute for sculpt mesh');
+    }
+    const positions = new Float32Array(positionAttr.count * positionAttr.itemSize);
+    positions.set(positionAttr.array as ArrayLike<number>);
+    const indexAttr = geometry.getIndex();
+    let indices: Uint32Array;
+    if (indexAttr) {
+      const source = indexAttr.array as ArrayLike<number>;
+      indices = new Uint32Array(indexAttr.count);
+      for (let i = 0; i < indexAttr.count; i += 1) {
+        indices[i] = Number(source[i]);
+      }
+    } else {
+      indices = new Uint32Array(positionAttr.count);
+      for (let i = 0; i < positionAttr.count; i += 1) {
+        indices[i] = i;
+      }
+    }
+    return {
+      meshId: binding.mesh.uuid,
+      positions,
+      indices
+    };
+  };
+
+  const prepareSculptData = (entry: ModelEntry) => {
+    if (entry.sculpt.bindings.length === 0) {
+      entry.sculpt.ready = true;
+      entry.sculpt.preparing = false;
+      setModelVisibility(entry, entry.visible);
+      return;
+    }
+    entry.sculpt.preparing = true;
+    entry.sculpt.ready = false;
+    setModelVisibility(entry, entry.visible);
+    pendingModelPreps.add(entry.id);
+    updatePrepIndicator();
+    const meshes = entry.sculpt.bindings.map((binding) => createSculptMeshPayload(binding));
+    const message: SculptWorkerBuildRequest = {
+      type: 'build',
+      modelId: entry.id,
+      meshes
+    };
+    const transfers = meshes.flatMap((mesh) => [mesh.positions.buffer, mesh.indices.buffer]);
+    sculptWorker.postMessage(message, transfers);
+  };
+
   const applyModel = (object: Object3D, meta: { name: string }) => {
     object.name = meta.name;
     scene.add(object);
+    object.updateWorldMatrix(true, true);
+    const sculptBindings = collectSculptMeshes(object);
+    sculptBindings.forEach((binding) => sculptMeshLookup.set(binding.mesh.uuid, binding));
 
     const entry: ModelEntry = {
       id: createModelId(),
       name: meta.name,
       object,
       visible: true,
-      wireframe: false
+      wireframe: false,
+      sculpt: {
+        bindings: sculptBindings,
+        ready: sculptBindings.length === 0,
+        preparing: sculptBindings.length > 0
+      }
     };
     models.push(entry);
 
@@ -277,6 +398,10 @@ export function createViewer(root: HTMLElement): void {
     setModelWireframe(entry, false);
     setModelVisibility(entry, true);
     refreshPanel();
+
+    if (entry.sculpt.preparing) {
+      prepareSculptData(entry);
+    }
 
     if (!hasLoadedModel) {
       hasLoadedModel = true;
@@ -328,13 +453,12 @@ export function createViewer(root: HTMLElement): void {
   const sculptIconSrc = iconPath('sculpt.svg');
 
   const sculptHighlight = createSculptHighlight();
-  scene.add(sculptHighlight);
+  scene.add(sculptHighlight.object);
+  const highlightTrianglesScratch: number[] = [];
+  let lastPointerHit: SceneIntersection | null = null;
   const hideSculptHighlight = () => {
-    sculptHighlight.visible = false;
-  };
-  const showSculptHighlight = (point: Vector3) => {
-    sculptHighlight.position.copy(point);
-    sculptHighlight.visible = true;
+    sculptHighlight.hide();
+    lastPointerHit = null;
   };
   const toolsPanel = createToolsPanel(tools, {
     onSelectionChange: (tool) => {
@@ -352,6 +476,52 @@ export function createViewer(root: HTMLElement): void {
   host.appendChild(toolsPanel.element);
   const toolControls = createToolControls();
   host.appendChild(toolControls.element);
+  const updateSculptHighlightForHit = (hit: SceneIntersection | null) => {
+    if (!hit) {
+      hideSculptHighlight();
+      return;
+    }
+    const mesh = findHitMesh(hit.object);
+    if (!mesh) {
+      hideSculptHighlight();
+      return;
+    }
+    const binding = sculptMeshLookup.get(mesh.uuid);
+    if (!binding || !binding.tree) {
+      hideSculptHighlight();
+      return;
+    }
+    const radiusScale = toolControls.getRadius();
+    if (radiusScale <= 0) {
+      hideSculptHighlight();
+      return;
+    }
+    const radius = radiusScale * binding.boundingRadius;
+    if (radius <= 0) {
+      hideSculptHighlight();
+      return;
+    }
+    mesh.updateWorldMatrix(true, false);
+    const localPoint = hit.point.clone();
+    mesh.worldToLocal(localPoint);
+    const triangles = collectTrianglesWithinRadius(
+      binding.tree,
+      localPoint,
+      radius,
+      highlightTrianglesScratch
+    );
+    if (triangles.length === 0) {
+      hideSculptHighlight();
+      return;
+    }
+    sculptHighlight.renderTriangles(mesh, triangles);
+    lastPointerHit = hit;
+  };
+  toolControls.onRadiusChange(() => {
+    if (lastPointerHit) {
+      updateSculptHighlightForHit(lastPointerHit);
+    }
+  });
   let toolsOpen = false;
   const toolsToggle = createToolsToggle(() => {
     toolsOpen = !toolsOpen;
@@ -407,7 +577,7 @@ export function createViewer(root: HTMLElement): void {
     const hit = pickSceneIntersection(coords.x, coords.y);
     if (hit) {
       if (activeTool && !toolsOpen) {
-        showSculptHighlight(hit.point);
+        updateSculptHighlightForHit(hit);
       }
       return;
     }
@@ -432,7 +602,7 @@ export function createViewer(root: HTMLElement): void {
     }
     const hit = pickSceneIntersection(coords.x, coords.y);
     if (hit) {
-      showSculptHighlight(hit.point);
+      updateSculptHighlightForHit(hit);
     } else {
       hideSculptHighlight();
     }
@@ -650,6 +820,19 @@ type MaterialState = {
   wireframe: boolean;
 };
 
+type SculptMeshBinding = {
+  mesh: Mesh;
+  geometry: BufferGeometry;
+  tree: SerializedSculptTree | null;
+  boundingRadius: number;
+};
+
+type SculptState = {
+  bindings: SculptMeshBinding[];
+  ready: boolean;
+  preparing: boolean;
+};
+
 function collectMaterialStates(object: Object3D): MaterialState[] {
   const materials: MaterialState[] = [];
   object.traverse((child) => {
@@ -675,6 +858,7 @@ type ModelEntry = {
   object: Object3D;
   visible: boolean;
   wireframe: boolean;
+  sculpt: SculptState;
 };
 
 type ModelPanelHandlers = {
@@ -961,22 +1145,152 @@ function createToolsToggle(onToggle: () => void): HTMLButtonElement {
   return button;
 }
 
-function createSculptHighlight(): Mesh {
-  const geometry = new SphereGeometry(0.045, 16, 16);
+type SculptPrepIndicator = {
+  element: HTMLElement;
+  setActive: (active: boolean) => void;
+};
+
+function createSculptPrepIndicator(): SculptPrepIndicator {
+  const indicator = document.createElement('div');
+  indicator.className = 'sculpt-preparing sculpt-preparing-hidden';
+  const spinner = document.createElement('span');
+  spinner.className = 'sculpt-preparing-spinner';
+  const label = document.createElement('span');
+  label.className = 'sculpt-preparing-label';
+  label.textContent = 'Preparing sculpt data…';
+  indicator.append(spinner, label);
+  return {
+    element: indicator,
+    setActive: (active: boolean) => {
+      indicator.classList.toggle('sculpt-preparing-hidden', !active);
+    }
+  };
+}
+
+type SculptHighlightInstance = {
+  object: Mesh;
+  hide: () => void;
+  renderTriangles: (target: Mesh, triangles: number[]) => void;
+};
+
+function createSculptHighlight(): SculptHighlightInstance {
+  const geometry = new BufferGeometry();
+  let positionAttribute = new BufferAttribute(new Float32Array(0), 3);
+  geometry.setAttribute('position', positionAttribute);
   const material = new MeshBasicMaterial({
     color: '#8fd9ff',
     transparent: true,
-    opacity: 0.65,
-    depthTest: false
+    opacity: 0.45,
+    depthTest: false,
+    depthWrite: false,
+    side: DoubleSide
   });
   const highlight = new Mesh(geometry, material);
   highlight.visible = false;
-  return highlight;
+  highlight.renderOrder = 10;
+  const localVertex = new Vector3();
+  const worldVertex = new Vector3();
+  const ensureCapacity = (vertexCount: number) => {
+    const requiredFloats = vertexCount * 3;
+    if ((positionAttribute.array as Float32Array).length === requiredFloats) {
+      return;
+    }
+    positionAttribute = new BufferAttribute(new Float32Array(requiredFloats), 3);
+    geometry.setAttribute('position', positionAttribute);
+  };
+  return {
+    object: highlight,
+    hide: () => {
+      highlight.visible = false;
+    },
+    renderTriangles: (target, triangles) => {
+      if (triangles.length === 0) {
+        highlight.visible = false;
+        return;
+      }
+      const sourceGeometry = target.geometry as BufferGeometry;
+      const positions = sourceGeometry.getAttribute('position') as BufferAttribute | undefined;
+      if (!positions) {
+        highlight.visible = false;
+        return;
+      }
+      const indexAttr = sourceGeometry.getIndex();
+      ensureCapacity(triangles.length * 3);
+      const buffer = positionAttribute.array as Float32Array;
+      let offset = 0;
+      target.updateWorldMatrix(true, false);
+      for (let i = 0; i < triangles.length; i += 1) {
+        const triIndex = triangles[i];
+        const base = triIndex * 3;
+        for (let corner = 0; corner < 3; corner += 1) {
+          const vertexIndex = indexAttr ? indexAttr.getX(base + corner) : base + corner;
+          localVertex.fromBufferAttribute(positions, vertexIndex);
+          worldVertex.copy(localVertex).applyMatrix4(target.matrixWorld);
+          buffer[offset++] = worldVertex.x;
+          buffer[offset++] = worldVertex.y;
+          buffer[offset++] = worldVertex.z;
+        }
+      }
+      positionAttribute.needsUpdate = true;
+      geometry.computeBoundingSphere();
+      highlight.visible = true;
+    }
+  };
+}
+
+const scratchScale = new Vector3();
+
+function collectSculptMeshes(root: Object3D): SculptMeshBinding[] {
+  const bindings: SculptMeshBinding[] = [];
+  root.traverse((child) => {
+    const mesh = child as Mesh;
+    if (!mesh.isMesh) {
+      return;
+    }
+    const geometry = mesh.geometry as BufferGeometry;
+    const positionAttr = geometry.getAttribute('position');
+    if (!geometry || !positionAttr) {
+      return;
+    }
+    bindings.push({
+      mesh,
+      geometry,
+      tree: null,
+      boundingRadius: computeMeshBoundingRadius(mesh)
+    });
+  });
+  return bindings;
+}
+
+function computeMeshBoundingRadius(mesh: Mesh): number {
+  const geometry = mesh.geometry as BufferGeometry;
+  geometry.computeBoundingSphere();
+  const sphere = geometry.boundingSphere;
+  mesh.updateWorldMatrix(true, false);
+  mesh.getWorldScale(scratchScale);
+  const maxScale = Math.max(scratchScale.x, scratchScale.y, scratchScale.z);
+  const safeScale = Number.isFinite(maxScale) && maxScale > 0 ? maxScale : 1;
+  const baseRadius = sphere?.radius ?? 1;
+  return baseRadius * safeScale;
+}
+
+function findHitMesh(object: Object3D): Mesh | null {
+  let current: Object3D | null = object;
+  while (current) {
+    const mesh = current as Mesh;
+    if (mesh.isMesh) {
+      return mesh;
+    }
+    current = current.parent;
+  }
+  return null;
 }
 
 type ToolControls = {
   element: HTMLElement;
   setVisible: (visible: boolean) => void;
+  getRadius: () => number;
+  onRadiusChange: (listener: (value: number) => void) => void;
 };
 
 function createToolControls(): ToolControls {
@@ -1005,18 +1319,29 @@ function createToolControls(): ToolControls {
     caption.className = 'tools-control-label';
     caption.textContent = options.label;
     wrapper.append(track, caption);
-    return wrapper;
+    return { element: wrapper, input };
   };
 
-  container.append(
-    createControl({ label: 'Radius', min: 1, max: 100, step: 1, value: 25 }),
-    createControl({ label: 'Value', min: 0, max: 100, step: 1, value: 50 })
-  );
+  const radiusControl = createControl({ label: 'Radius', min: 1, max: 100, step: 1, value: 25 });
+  const valueControl = createControl({ label: 'Value', min: 0, max: 100, step: 1, value: 50 });
+  container.append(radiusControl.element, valueControl.element);
+
+  const radiusListeners = new Set<(value: number) => void>();
+  const getRadius = () => Number(radiusControl.input.value) / 100;
+  const notifyRadius = () => {
+    const value = getRadius();
+    radiusListeners.forEach((listener) => listener(value));
+  };
+  radiusControl.input.addEventListener('input', notifyRadius);
 
   return {
     element: container,
     setVisible: (visible: boolean) => {
       container.classList.toggle('tools-controls-hidden', !visible);
+    },
+    getRadius,
+    onRadiusChange: (listener: (value: number) => void) => {
+      radiusListeners.add(listener);
     }
   };
 }
@@ -1073,7 +1398,8 @@ function applyMiddleEllipsis(el: HTMLElement, fullText: string): void {
 
 function setModelVisibility(entry: ModelEntry, visible: boolean): void {
   entry.visible = visible;
-  entry.object.visible = visible;
+  const shouldShow = visible && entry.sculpt.ready && !entry.sculpt.preparing;
+  entry.object.visible = shouldShow;
   updateWireframeOverlays(entry);
 }
 

@@ -146,6 +146,49 @@ body,
   transform: translate(-50%, 10px);
 }
 
+.sculpt-preparing {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.85rem;
+  border-radius: 999px;
+  background: rgba(5, 7, 11, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.8);
+  z-index: 6;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.sculpt-preparing-hidden {
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+}
+
+.sculpt-preparing-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: rgba(255, 255, 255, 0.9);
+  animation: sculpt-spin 0.9s linear infinite;
+}
+
+@keyframes sculpt-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .sidebar {
   position: absolute;
   top: 72px;
