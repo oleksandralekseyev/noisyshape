@@ -1,0 +1,60 @@
+name: Deploy PR Previews
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - closed
+
+concurrency:
+  group: preview-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        if: github.event.action != 'closed'
+        uses: pnpm/action-setup@v2
+        with:
+          version: 10.22.0
+
+      - name: Setup Node.js
+        if: github.event.action != 'closed'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install UI dependencies
+        if: github.event.action != 'closed'
+        run: pnpm install --filter app
+
+      - name: Build static site
+        if: github.event.action != 'closed'
+        run: pnpm --filter app build
+
+      - name: Ensure dist directory exists
+        if: github.event.action == 'closed'
+        run: mkdir -p packages/app/dist
+
+      - name: Deploy PR preview
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: packages/app/dist
+          preview-branch: gh-pages
+          umbrella-dir: pr-preview

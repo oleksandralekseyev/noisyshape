@@ -21,6 +21,7 @@ import {
   WebGLRenderer,
   WireframeGeometry
 } from 'three';
+import type { Intersection } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
@@ -34,6 +35,12 @@ import {
 } from './modelStorage';
 
 const SUPPORTED_EXTENSIONS = ['.glb', '.gltf', '.obj', '.stl', '.ply'];
+const normalizedBasePath = import.meta.env.BASE_URL.replace(/\/$/, '');
+const withBasePath = (relativePath: string) => {
+  const cleanedPath = relativePath.replace(/^\//, '');
+  return `${normalizedBasePath}/${cleanedPath}`;
+};
+const iconPath = (filename: string) => withBasePath(`icons/${filename}`);
 
 let lastMaterialStates: MaterialState[] = [];
 const UNLOAD_WARNING = 'You have models loaded. Leaving will lose them.';
@@ -150,10 +157,11 @@ export function createViewer(root: HTMLElement): void {
   const models: ModelEntry[] = [];
   const raycaster = new Raycaster();
   const pointer = new Vector2();
-  const pickSceneIntersection = (ndcX: number, ndcY: number) => {
+  type SceneIntersection = Intersection<Object3D>;
+  const pickSceneIntersection = (ndcX: number, ndcY: number): SceneIntersection | null => {
     pointer.set(ndcX, ndcY);
     raycaster.setFromCamera(pointer, camera);
-    let closest: ReturnType<Raycaster['intersectObject']>[number] | null = null;
+    let closest: SceneIntersection | null = null;
     models.forEach((entry) => {
       if (!entry.visible || !entry.object.visible) {
         return;
@@ -311,12 +319,13 @@ export function createViewer(root: HTMLElement): void {
   refreshPanel();
   void restorePersistedModels();
 
-  const tools = [
-    { id: 'smooth', label: 'Smooth', icon: '/icons/smooth.svg' },
-    { id: 'add', label: 'Add', icon: '/icons/add.svg' },
-    { id: 'remove', label: 'Remove', icon: '/icons/remove.svg' }
+  const tools: ToolDescriptor[] = [
+    { id: 'smooth', label: 'Smooth', icon: iconPath('smooth.svg') },
+    { id: 'add', label: 'Add', icon: iconPath('add.svg') },
+    { id: 'remove', label: 'Remove', icon: iconPath('remove.svg') }
   ];
   let activeTool: ToolDescriptor | null = null;
+  const sculptIconSrc = iconPath('sculpt.svg');
 
   const sculptHighlight = createSculptHighlight();
   scene.add(sculptHighlight);
@@ -356,7 +365,7 @@ export function createViewer(root: HTMLElement): void {
       toggleIcon.src = descriptor.icon;
       toggleIcon.alt = descriptor.label;
     } else {
-      toggleIcon.src = '/icons/sculpt.svg';
+      toggleIcon.src = sculptIconSrc;
       toggleIcon.alt = 'Sculpt';
     }
   };
@@ -617,15 +626,15 @@ function exposeDebugInterface(
 declare global {
   interface Window {
     __NOISYSHAPE_DEBUG?: {
-      getCameraState: () => CameraState;
-      getMaterialStates: () => MaterialState[];
-      getModelStates: () => Array<{
+      getCameraState?: () => CameraState;
+      getMaterialStates?: () => MaterialState[];
+      getModelStates?: () => Array<{
         id: string;
         name: string;
         visible: boolean;
         wireframe: boolean;
       }>;
-      hasUnloadGuard: () => boolean;
+      hasUnloadGuard?: () => boolean;
       hitTestViewport?: (x: number, y: number) => boolean;
       getActiveSculptTool?: () => string | null;
       scaleModel?: (id: string, scale: number) => void;
@@ -946,7 +955,7 @@ function createToolsToggle(onToggle: () => void): HTMLButtonElement {
   button.setAttribute('aria-expanded', 'false');
   button.addEventListener('click', onToggle);
   const icon = document.createElement('img');
-  icon.src = '/icons/sculpt.svg';
+  icon.src = iconPath('sculpt.svg');
   icon.alt = 'Sculpt';
   button.appendChild(icon);
   return button;
