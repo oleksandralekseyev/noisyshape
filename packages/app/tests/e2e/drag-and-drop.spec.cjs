@@ -72,18 +72,75 @@ test.describe('Drag-and-drop viewer', () => {
     await expectSidebarHidden(page, false);
   });
 
-  test('tools toggle shows floating tool panel', async ({ page }) => {
+  test('tools toggle reflects selection and sliders reset on outside click', async ({ page }) => {
     await openEditor(page);
     const toggle = page.locator('.tools-toggle');
+    const toggleIcon = toggle.locator('img');
     const panel = page.locator('.tools-panel');
+    const controls = page.locator('.tools-controls');
     await expect(toggle).toBeVisible();
+    await expect(toggleIcon).toHaveAttribute('src', /\/icons\/sculpt\.svg$/);
     await expect(panel).toHaveClass(/tools-hidden/);
+    await expect(controls).toHaveClass(/tools-controls-hidden/);
+
+    await dropCube(page);
+
     await toggle.click();
     await expect(panel).not.toHaveClass(/tools-hidden/);
     await expect(panel.locator('.tools-button')).toHaveCount(3);
-    await expect(panel.locator('.tools-label')).toHaveText('Sculpt mode');
+    await expect(controls).toHaveClass(/tools-controls-hidden/);
+
+    const outsideForList = await findOutsideViewportPoint(page);
+    if (!outsideForList) {
+      throw new Error('Unable to locate outside-mesh coordinate for list');
+    }
+    await page.mouse.click(outsideForList.clientX, outsideForList.clientY);
+    await expect(panel).toHaveClass(/tools-hidden/);
+
+    await toggle.click();
+    await expect(panel).not.toHaveClass(/tools-hidden/);
+
+    const firstTool = panel.locator('.tools-button').first();
+    await firstTool.click();
+    await expect(panel).toHaveClass(/tools-hidden/);
+    await expect(controls).not.toHaveClass(/tools-controls-hidden/);
+    await expect(controls.locator('.tools-control')).toHaveCount(2);
+    await expect(controls.locator('.tools-control-label')).toHaveText(['Radius', 'Value']);
+    await expect(toggleIcon).toHaveAttribute('src', /\/icons\/smooth\.svg$/);
+
+    await toggle.click();
+    await expect(panel).not.toHaveClass(/tools-hidden/);
+    await expect(controls).toHaveClass(/tools-controls-hidden/);
     await toggle.click();
     await expect(panel).toHaveClass(/tools-hidden/);
+    await expect(controls).not.toHaveClass(/tools-controls-hidden/);
+
+    await toggle.click();
+    await expect(panel).not.toHaveClass(/tools-hidden/);
+    await firstTool.click();
+    await expect(panel).toHaveClass(/tools-hidden/);
+    await expect(controls).not.toHaveClass(/tools-controls-hidden/);
+
+    const canvas = page.locator('canvas');
+    if (!(await canvas.boundingBox())) {
+      throw new Error('Canvas bounding box not available');
+    }
+    const sidebarToggle = page.locator('.panel-toggle');
+    const sidebar = page.locator('.sidebar');
+    const isSidebarHidden = await sidebar.evaluate((el) =>
+      el.classList.contains('sidebar-hidden')
+    );
+    if (!isSidebarHidden) {
+      await sidebarToggle.click();
+    }
+    const outsidePoint = await findOutsideViewportPoint(page);
+    if (!outsidePoint) {
+      throw new Error('Unable to locate outside-mesh coordinate');
+    }
+    await page.mouse.click(outsidePoint.clientX, outsidePoint.clientY);
+    await expect(controls).toHaveClass(/tools-controls-hidden/);
+    await expect(panel).toHaveClass(/tools-hidden/);
+    await expect(toggleIcon).toHaveAttribute('src', /\/icons\/sculpt\.svg$/);
   });
 
   test('restores every loaded model after reload', async ({ page }) => {
@@ -370,6 +427,53 @@ async function expectDropMessageCentered(page) {
   const dy = Math.abs(viewportCenter.y - overlayCenter.y);
   expect(dx).toBeLessThan(5);
   expect(dy).toBeLessThan(5);
+}
+
+async function findOutsideViewportPoint(page) {
+  return page.evaluate(() => {
+    const debug = window.__NOISYSHAPE_DEBUG;
+    const canvas = document.querySelector('canvas');
+    if (!debug?.hitTestViewport || !canvas) {
+      throw new Error('Viewport helpers unavailable');
+    }
+    const bounds = canvas.getBoundingClientRect();
+    const blockerSelectors = [
+      '.tools-toggle',
+      '.panel-toggle',
+      '.tools-panel',
+      '.tools-controls',
+      '.sidebar'
+    ];
+    const blockers = blockerSelectors
+      .map((selector) => document.querySelector(selector))
+      .filter((el) => el instanceof HTMLElement)
+      .map((el) => ({ rect: el.getBoundingClientRect(), style: window.getComputedStyle(el) }))
+      .filter(
+        ({ style }) =>
+          style.visibility !== 'hidden' &&
+          style.display !== 'none' &&
+          style.pointerEvents !== 'none'
+      )
+      .map(({ rect }) => rect);
+    const coords = [-0.99, -0.95, -0.9, -0.8, -0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6, 0.8, 0.9, 0.95, 0.99];
+    for (const y of coords) {
+      for (const x of coords) {
+        const clientX = bounds.left + ((x + 1) / 2) * bounds.width;
+        const clientY = bounds.top + ((-y + 1) / 2) * bounds.height;
+        const overlaps = blockers.some(
+          (rect) =>
+            clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom
+        );
+        if (overlaps) {
+          continue;
+        }
+        if (!debug.hitTestViewport(x, y)) {
+          return { clientX, clientY };
+        }
+      }
+    }
+    return null;
+  });
 }
 
 async function sampleCenterPixel(page) {

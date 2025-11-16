@@ -144,6 +144,26 @@ export function createViewer(root: HTMLElement): void {
   };
 
   const models: ModelEntry[] = [];
+  const projectedCorner = new Vector3();
+  const hitTestViewport = (ndcX: number, ndcY: number) => {
+    return models.some((entry) => {
+      if (!entry.visible || !entry.object.visible) {
+        return false;
+      }
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      entry.boundsCorners.forEach((corner) => {
+        projectedCorner.copy(corner).project(camera);
+        minX = Math.min(minX, projectedCorner.x);
+        maxX = Math.max(maxX, projectedCorner.x);
+        minY = Math.min(minY, projectedCorner.y);
+        maxY = Math.max(maxY, projectedCorner.y);
+      });
+      return ndcX >= minX && ndcX <= maxX && ndcY >= minY && ndcY <= maxY;
+    });
+  };
   let hasLoadedModel = false;
 
   const animate = () => {
@@ -229,12 +249,15 @@ export function createViewer(root: HTMLElement): void {
     object.name = meta.name;
     scene.add(object);
 
+    const bounds = new Box3().setFromObject(object);
     const entry: ModelEntry = {
       id: createModelId(),
       name: meta.name,
       object,
       visible: true,
-      wireframe: false
+      wireframe: false,
+      bounds,
+      boundsCorners: getBoxCorners(bounds)
     };
     models.push(entry);
 
@@ -290,21 +313,82 @@ export function createViewer(root: HTMLElement): void {
     { id: 'add', label: 'Add', icon: '/icons/add.svg' },
     { id: 'remove', label: 'Remove', icon: '/icons/remove.svg' }
   ];
-  const toolsPanel = createToolsPanel(tools);
+  let activeTool: ToolDescriptor | null = null;
+
+  const toolsPanel = createToolsPanel(tools, {
+    onSelectionChange: (tool) => {
+      activeTool = tool;
+      if (activeTool) {
+        toolsOpen = false;
+        updateToolsVisibility();
+      } else {
+        syncToolControls();
+      }
+      updateToggleIcon();
+    }
+  });
   host.appendChild(toolsPanel.element);
+  const toolControls = createToolControls();
+  host.appendChild(toolControls.element);
   let toolsOpen = false;
   const toolsToggle = createToolsToggle(() => {
     toolsOpen = !toolsOpen;
     updateToolsVisibility();
   });
+  const toggleIcon = toolsToggle.querySelector('img');
+  const updateToggleIcon = () => {
+    if (!toggleIcon) return;
+    if (activeTool) {
+      toggleIcon.src = activeTool.icon;
+      toggleIcon.alt = activeTool.label;
+    } else {
+      toggleIcon.src = '/icons/sculpt.svg';
+      toggleIcon.alt = 'Sculpt';
+    }
+  };
   host.appendChild(toolsToggle);
+  const syncToolControls = () => {
+    toolControls.setVisible(Boolean(activeTool) && !toolsOpen);
+  };
 
   const updateToolsVisibility = () => {
     toolsPanel.setVisible(toolsOpen);
     toolsToggle.setAttribute('aria-expanded', String(toolsOpen));
-    toolsToggle.setAttribute('aria-label', toolsOpen ? 'Hide tools' : 'Show tools');
+    toolsToggle.setAttribute('aria-label', toolsOpen ? 'Hide sculpt tools' : 'Show sculpt tools');
+    syncToolControls();
   };
   updateToolsVisibility();
+  updateToggleIcon();
+
+  renderer.domElement.addEventListener('pointerdown', (event) => {
+    const bounds = renderer.domElement.getBoundingClientRect();
+    if (bounds.width === 0 || bounds.height === 0) {
+      return;
+    }
+    const ndcX = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
+    const ndcY = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
+    if (!hitTestViewport(ndcX, ndcY)) {
+      if (activeTool) {
+        toolsPanel.setActiveTool(null);
+      }
+      if (toolsOpen) {
+        toolsOpen = false;
+        updateToolsVisibility();
+      }
+    }
+  });
+
+  const exposeSculptDebug = () => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.__NOISYSHAPE_DEBUG = {
+      ...window.__NOISYSHAPE_DEBUG,
+      hitTestViewport,
+      getActiveSculptTool: () => activeTool?.id ?? null
+    };
+  };
+  exposeSculptDebug();
 
 }
 
@@ -476,6 +560,8 @@ declare global {
         wireframe: boolean;
       }>;
       hasUnloadGuard: () => boolean;
+      hitTestViewport?: (x: number, y: number) => boolean;
+      getActiveSculptTool?: () => string | null;
     };
   }
 }
@@ -507,12 +593,28 @@ function collectMaterialStates(object: Object3D): MaterialState[] {
   return materials;
 }
 
+function getBoxCorners(box: Box3): Vector3[] {
+  const { min, max } = box;
+  return [
+    new Vector3(min.x, min.y, min.z),
+    new Vector3(min.x, min.y, max.z),
+    new Vector3(min.x, max.y, min.z),
+    new Vector3(min.x, max.y, max.z),
+    new Vector3(max.x, min.y, min.z),
+    new Vector3(max.x, min.y, max.z),
+    new Vector3(max.x, max.y, min.z),
+    new Vector3(max.x, max.y, max.z)
+  ];
+}
+
 type ModelEntry = {
   id: string;
   name: string;
   object: Object3D;
   visible: boolean;
   wireframe: boolean;
+  bounds: Box3;
+  boundsCorners: Vector3[];
 };
 
 type ModelPanelHandlers = {
@@ -699,9 +801,18 @@ type ToolDescriptor = { id: string; label: string; icon: string };
 type ToolsPanel = {
   element: HTMLElement;
   setVisible: (visible: boolean) => void;
+  setActiveTool: (toolId: string | null) => void;
 };
 
-function createToolsPanel(tools: ToolDescriptor[]): ToolsPanel {
+type ToolsPanelHandlers = {
+  onSelectionChange?: (tool: ToolDescriptor | null) => void;
+};
+
+function createToolsPanel(
+  tools: ToolDescriptor[],
+  handlers: ToolsPanelHandlers = {}
+): ToolsPanel {
+  const { onSelectionChange } = handlers;
   const panel = document.createElement('div');
   panel.className = 'tools-panel tools-hidden';
 
@@ -714,6 +825,24 @@ function createToolsPanel(tools: ToolDescriptor[]): ToolsPanel {
 
   panel.append(list, label);
 
+  const toolMap = new Map(tools.map((tool) => [tool.id, tool]));
+  const buttons = new Map<string, HTMLButtonElement>();
+  let activeToolId: string | null = null;
+  let defaultLabel = 'Sculpt mode';
+
+  const setActiveToolInternal = (toolId: string | null, silent = false) => {
+    activeToolId = toolId;
+    buttons.forEach((btn, id) => {
+      btn.classList.toggle('is-active', id === toolId);
+    });
+    const descriptor = toolId ? toolMap.get(toolId) ?? null : null;
+    defaultLabel = descriptor?.label ?? 'Sculpt mode';
+    label.textContent = defaultLabel;
+    if (!silent) {
+      onSelectionChange?.(descriptor);
+    }
+  };
+
   tools.forEach((tool) => {
     const button = document.createElement('button');
     button.type = 'button';
@@ -724,23 +853,36 @@ function createToolsPanel(tools: ToolDescriptor[]): ToolsPanel {
     img.src = tool.icon;
     img.alt = tool.label;
     button.appendChild(img);
-    const setLabel = () => {
+    const showToolLabel = () => {
       label.textContent = tool.label;
     };
     const resetLabel = () => {
-      label.textContent = 'Sculpt mode';
+      label.textContent = defaultLabel;
     };
-    button.addEventListener('mouseenter', setLabel);
+    button.addEventListener('mouseenter', showToolLabel);
     button.addEventListener('mouseleave', resetLabel);
-    button.addEventListener('focus', setLabel);
+    button.addEventListener('focus', showToolLabel);
     button.addEventListener('blur', resetLabel);
+    button.addEventListener('click', () => {
+      setActiveToolInternal(tool.id);
+    });
     list.appendChild(button);
+    buttons.set(tool.id, button);
   });
+
+  setActiveToolInternal(null, true);
 
   return {
     element: panel,
     setVisible: (visible: boolean) => {
       panel.classList.toggle('tools-hidden', !visible);
+    },
+    setActiveTool: (toolId: string | null) => {
+      if (toolId && !toolMap.has(toolId)) {
+        setActiveToolInternal(null);
+        return;
+      }
+      setActiveToolInternal(toolId ?? null);
     }
   };
 }
@@ -757,6 +899,53 @@ function createToolsToggle(onToggle: () => void): HTMLButtonElement {
   icon.alt = 'Sculpt';
   button.appendChild(icon);
   return button;
+}
+
+type ToolControls = {
+  element: HTMLElement;
+  setVisible: (visible: boolean) => void;
+};
+
+function createToolControls(): ToolControls {
+  const container = document.createElement('div');
+  container.className = 'tools-controls tools-controls-hidden';
+
+  const createControl = (options: {
+    label: string;
+    min: number;
+    max: number;
+    step: number;
+    value: number;
+  }) => {
+    const wrapper = document.createElement('label');
+    wrapper.className = 'tools-control';
+    const track = document.createElement('div');
+    track.className = 'tools-control-track';
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = String(options.min);
+    input.max = String(options.max);
+    input.step = String(options.step);
+    input.value = String(options.value);
+    track.appendChild(input);
+    const caption = document.createElement('span');
+    caption.className = 'tools-control-label';
+    caption.textContent = options.label;
+    wrapper.append(track, caption);
+    return wrapper;
+  };
+
+  container.append(
+    createControl({ label: 'Radius', min: 1, max: 100, step: 1, value: 25 }),
+    createControl({ label: 'Value', min: 0, max: 100, step: 1, value: 50 })
+  );
+
+  return {
+    element: container,
+    setVisible: (visible: boolean) => {
+      container.classList.toggle('tools-controls-hidden', !visible);
+    }
+  };
 }
 
 function getDisplayName(name: string): string {
