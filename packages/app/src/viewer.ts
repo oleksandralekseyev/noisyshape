@@ -15,7 +15,6 @@ import {
   Raycaster,
   Scene,
   SRGBColorSpace,
-  SphereGeometry,
   Vector2,
   Vector3,
   WebGLRenderer,
@@ -32,6 +31,11 @@ import {
   persistModel,
   type StoredModel
 } from './modelStorage';
+import {
+  createSculptHighlight,
+  updateSculptHighlightMesh,
+  type SculptHighlightTarget
+} from './sculptHighlight';
 
 const SUPPORTED_EXTENSIONS = ['.glb', '.gltf', '.obj', '.stl', '.ply'];
 
@@ -320,13 +324,7 @@ export function createViewer(root: HTMLElement): void {
 
   const sculptHighlight = createSculptHighlight();
   scene.add(sculptHighlight);
-  const hideSculptHighlight = () => {
-    sculptHighlight.visible = false;
-  };
-  const showSculptHighlight = (point: Vector3) => {
-    sculptHighlight.position.copy(point);
-    sculptHighlight.visible = true;
-  };
+  let sculptHighlightTarget: SculptHighlightTarget | null = null;
   const toolsPanel = createToolsPanel(tools, {
     onSelectionChange: (tool) => {
       activeTool = tool;
@@ -335,7 +333,7 @@ export function createViewer(root: HTMLElement): void {
         updateToolsVisibility();
       } else {
         syncToolControls();
-        hideSculptHighlight();
+        clearSculptHighlight();
       }
       updateToggleIcon();
     }
@@ -343,6 +341,46 @@ export function createViewer(root: HTMLElement): void {
   host.appendChild(toolsPanel.element);
   const toolControls = createToolControls();
   host.appendChild(toolControls.element);
+  const hideSculptHighlight = () => {
+    sculptHighlight.visible = false;
+  };
+  const clearSculptHighlight = () => {
+    sculptHighlightTarget = null;
+    hideSculptHighlight();
+  };
+  const refreshSculptHighlight = () => {
+    if (!sculptHighlightTarget) {
+      hideSculptHighlight();
+      return;
+    }
+    const updated = updateSculptHighlightMesh(
+      sculptHighlight,
+      sculptHighlightTarget,
+      toolControls.getRadius()
+    );
+    if (!updated) {
+      clearSculptHighlight();
+    }
+  };
+  const setSculptHighlightTarget = (
+    hit: ReturnType<Raycaster['intersectObject']>[number]
+  ) => {
+    if (!isHighlightableMesh(hit.object)) {
+      clearSculptHighlight();
+      return;
+    }
+    sculptHighlightTarget = {
+      mesh: hit.object,
+      point: hit.point.clone()
+    };
+    refreshSculptHighlight();
+  };
+  toolControls.onRadiusChange(() => {
+    if (!activeTool || toolsOpen) {
+      return;
+    }
+    refreshSculptHighlight();
+  });
   let toolsOpen = false;
   const toolsToggle = createToolsToggle(() => {
     toolsOpen = !toolsOpen;
@@ -364,8 +402,12 @@ export function createViewer(root: HTMLElement): void {
   const syncToolControls = () => {
     const controlsVisible = Boolean(activeTool) && !toolsOpen;
     toolControls.setVisible(controlsVisible);
-    if (!controlsVisible) {
+    if (controlsVisible) {
+      refreshSculptHighlight();
+    } else if (activeTool) {
       hideSculptHighlight();
+    } else {
+      clearSculptHighlight();
     }
   };
 
@@ -393,23 +435,24 @@ export function createViewer(root: HTMLElement): void {
   renderer.domElement.addEventListener('pointerdown', (event) => {
     const coords = getPointerNdc(event);
     if (!coords) {
+      clearSculptHighlight();
       return;
     }
     const hit = pickSceneIntersection(coords.x, coords.y);
     if (hit) {
       if (activeTool && !toolsOpen) {
-        showSculptHighlight(hit.point);
+        setSculptHighlightTarget(hit);
       }
       return;
     }
     if (activeTool) {
       toolsPanel.setActiveTool(null);
-      hideSculptHighlight();
     }
     if (toolsOpen) {
       toolsOpen = false;
       updateToolsVisibility();
     }
+    clearSculptHighlight();
   });
   renderer.domElement.addEventListener('pointermove', (event) => {
     if (!activeTool || toolsOpen) {
@@ -418,18 +461,18 @@ export function createViewer(root: HTMLElement): void {
     }
     const coords = getPointerNdc(event);
     if (!coords) {
-      hideSculptHighlight();
+      clearSculptHighlight();
       return;
     }
     const hit = pickSceneIntersection(coords.x, coords.y);
     if (hit) {
-      showSculptHighlight(hit.point);
+      setSculptHighlightTarget(hit);
     } else {
-      hideSculptHighlight();
+      clearSculptHighlight();
     }
   });
   renderer.domElement.addEventListener('pointerleave', () => {
-    hideSculptHighlight();
+    clearSculptHighlight();
   });
 
   const exposeSculptDebug = () => {
@@ -952,22 +995,15 @@ function createToolsToggle(onToggle: () => void): HTMLButtonElement {
   return button;
 }
 
-function createSculptHighlight(): Mesh {
-  const geometry = new SphereGeometry(0.045, 16, 16);
-  const material = new MeshBasicMaterial({
-    color: '#8fd9ff',
-    transparent: true,
-    opacity: 0.65,
-    depthTest: false
-  });
-  const highlight = new Mesh(geometry, material);
-  highlight.visible = false;
-  return highlight;
+function isHighlightableMesh(object: Object3D): object is Mesh {
+  return (object as Mesh).isMesh === true;
 }
 
 type ToolControls = {
   element: HTMLElement;
   setVisible: (visible: boolean) => void;
+  getRadius: () => number;
+  onRadiusChange: (handler: (value: number) => void) => void;
 };
 
 function createToolControls(): ToolControls {
@@ -996,18 +1032,36 @@ function createToolControls(): ToolControls {
     caption.className = 'tools-control-label';
     caption.textContent = options.label;
     wrapper.append(track, caption);
-    return wrapper;
+    return { element: wrapper, input };
   };
 
-  container.append(
-    createControl({ label: 'Radius', min: 1, max: 100, step: 1, value: 25 }),
-    createControl({ label: 'Value', min: 0, max: 100, step: 1, value: 50 })
-  );
+  const radiusControl = createControl({
+    label: 'Radius',
+    min: 1,
+    max: 100,
+    step: 1,
+    value: 25
+  });
+  const valueControl = createControl({
+    label: 'Value',
+    min: 0,
+    max: 100,
+    step: 1,
+    value: 50
+  });
+
+  container.append(radiusControl.element, valueControl.element);
 
   return {
     element: container,
     setVisible: (visible: boolean) => {
       container.classList.toggle('tools-controls-hidden', !visible);
+    },
+    getRadius: () => Number(radiusControl.input.value),
+    onRadiusChange: (handler: (value: number) => void) => {
+      radiusControl.input.addEventListener('input', () => {
+        handler(Number(radiusControl.input.value));
+      });
     }
   };
 }
