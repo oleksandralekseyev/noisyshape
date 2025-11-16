@@ -7,6 +7,8 @@ Search first, use the most standard and widely supported solution, and only prop
 Every feature must have an accompanying Markdown spec inside `docs/`; if a requirement shows up in a prompt without an existing doc, create or update the appropriate `docs/*.md` entry and treat it as the single source of truth for architecture. 
 
 Every change must also include test coverage (or updates to existing tests) so CI reflects the intended behavior—no feature lands without passing automated tests.
+- Keep test files focused and lightweight; avoid bundling unrelated features into a single spec so failures are easier to triage and maintain.
+- When debugging tests add logging via the test runner hooks or console output so we can inspect trace logs quickly; keep the logs concise and leave them in place so future investigations can reuse the signal without re-instrumenting.
 
 ## Project Structure & Module Organization
 
