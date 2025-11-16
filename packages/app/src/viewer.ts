@@ -8,11 +8,15 @@ import {
   LineBasicMaterial,
   LineSegments,
   Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   Object3D,
   PerspectiveCamera,
+  Raycaster,
   Scene,
   SRGBColorSpace,
+  SphereGeometry,
+  Vector2,
   Vector3,
   WebGLRenderer,
   WireframeGeometry
@@ -81,7 +85,7 @@ export function createViewer(root: HTMLElement): void {
   controls.enableDamping = true;
   controls.enablePan = true;
   controls.enableZoom = true;
-  exposeDebugInterface(camera, controls);
+  exposeDebugInterface(camera, controls, () => models);
 
   setupLights(scene);
 
@@ -144,26 +148,28 @@ export function createViewer(root: HTMLElement): void {
   };
 
   const models: ModelEntry[] = [];
-  const projectedCorner = new Vector3();
-  const hitTestViewport = (ndcX: number, ndcY: number) => {
-    return models.some((entry) => {
+  const raycaster = new Raycaster();
+  const pointer = new Vector2();
+  const pickSceneIntersection = (ndcX: number, ndcY: number) => {
+    pointer.set(ndcX, ndcY);
+    raycaster.setFromCamera(pointer, camera);
+    let closest: ReturnType<Raycaster['intersectObject']>[number] | null = null;
+    models.forEach((entry) => {
       if (!entry.visible || !entry.object.visible) {
-        return false;
+        return;
       }
-      let minX = Infinity;
-      let maxX = -Infinity;
-      let minY = Infinity;
-      let maxY = -Infinity;
-      entry.boundsCorners.forEach((corner) => {
-        projectedCorner.copy(corner).project(camera);
-        minX = Math.min(minX, projectedCorner.x);
-        maxX = Math.max(maxX, projectedCorner.x);
-        minY = Math.min(minY, projectedCorner.y);
-        maxY = Math.max(maxY, projectedCorner.y);
-      });
-      return ndcX >= minX && ndcX <= maxX && ndcY >= minY && ndcY <= maxY;
+      const hits = raycaster.intersectObject(entry.object, true);
+      if (hits.length === 0) {
+        return;
+      }
+      const [hit] = hits;
+      if (!closest || hit.distance < closest.distance) {
+        closest = hit;
+      }
     });
+    return closest;
   };
+  const hitTestViewport = (ndcX: number, ndcY: number) => pickSceneIntersection(ndcX, ndcY) !== null;
   let hasLoadedModel = false;
 
   const animate = () => {
@@ -249,15 +255,12 @@ export function createViewer(root: HTMLElement): void {
     object.name = meta.name;
     scene.add(object);
 
-    const bounds = new Box3().setFromObject(object);
     const entry: ModelEntry = {
       id: createModelId(),
       name: meta.name,
       object,
       visible: true,
-      wireframe: false,
-      bounds,
-      boundsCorners: getBoxCorners(bounds)
+      wireframe: false
     };
     models.push(entry);
 
@@ -315,6 +318,15 @@ export function createViewer(root: HTMLElement): void {
   ];
   let activeTool: ToolDescriptor | null = null;
 
+  const sculptHighlight = createSculptHighlight();
+  scene.add(sculptHighlight);
+  const hideSculptHighlight = () => {
+    sculptHighlight.visible = false;
+  };
+  const showSculptHighlight = (point: Vector3) => {
+    sculptHighlight.position.copy(point);
+    sculptHighlight.visible = true;
+  };
   const toolsPanel = createToolsPanel(tools, {
     onSelectionChange: (tool) => {
       activeTool = tool;
@@ -323,6 +335,7 @@ export function createViewer(root: HTMLElement): void {
         updateToolsVisibility();
       } else {
         syncToolControls();
+        hideSculptHighlight();
       }
       updateToggleIcon();
     }
@@ -349,7 +362,11 @@ export function createViewer(root: HTMLElement): void {
   };
   host.appendChild(toolsToggle);
   const syncToolControls = () => {
-    toolControls.setVisible(Boolean(activeTool) && !toolsOpen);
+    const controlsVisible = Boolean(activeTool) && !toolsOpen;
+    toolControls.setVisible(controlsVisible);
+    if (!controlsVisible) {
+      hideSculptHighlight();
+    }
   };
 
   const updateToolsVisibility = () => {
@@ -362,22 +379,57 @@ export function createViewer(root: HTMLElement): void {
   updateToolsVisibility();
   updateToggleIcon();
 
-  renderer.domElement.addEventListener('pointerdown', (event) => {
+  const getPointerNdc = (event: PointerEvent) => {
     const bounds = renderer.domElement.getBoundingClientRect();
     if (bounds.width === 0 || bounds.height === 0) {
+      return null;
+    }
+    return {
+      x: ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
+      y: -((event.clientY - bounds.top) / bounds.height) * 2 + 1
+    };
+  };
+
+  renderer.domElement.addEventListener('pointerdown', (event) => {
+    const coords = getPointerNdc(event);
+    if (!coords) {
       return;
     }
-    const ndcX = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
-    const ndcY = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
-    if (!hitTestViewport(ndcX, ndcY)) {
-      if (activeTool) {
-        toolsPanel.setActiveTool(null);
+    const hit = pickSceneIntersection(coords.x, coords.y);
+    if (hit) {
+      if (activeTool && !toolsOpen) {
+        showSculptHighlight(hit.point);
       }
-      if (toolsOpen) {
-        toolsOpen = false;
-        updateToolsVisibility();
-      }
+      return;
     }
+    if (activeTool) {
+      toolsPanel.setActiveTool(null);
+      hideSculptHighlight();
+    }
+    if (toolsOpen) {
+      toolsOpen = false;
+      updateToolsVisibility();
+    }
+  });
+  renderer.domElement.addEventListener('pointermove', (event) => {
+    if (!activeTool || toolsOpen) {
+      hideSculptHighlight();
+      return;
+    }
+    const coords = getPointerNdc(event);
+    if (!coords) {
+      hideSculptHighlight();
+      return;
+    }
+    const hit = pickSceneIntersection(coords.x, coords.y);
+    if (hit) {
+      showSculptHighlight(hit.point);
+    } else {
+      hideSculptHighlight();
+    }
+  });
+  renderer.domElement.addEventListener('pointerleave', () => {
+    hideSculptHighlight();
   });
 
   const exposeSculptDebug = () => {
@@ -533,7 +585,11 @@ type CameraState = {
   target: [number, number, number];
 };
 
-function exposeDebugInterface(camera: PerspectiveCamera, controls: OrbitControls): void {
+function exposeDebugInterface(
+  camera: PerspectiveCamera,
+  controls: OrbitControls,
+  getModels: () => ModelEntry[]
+): void {
   if (typeof window === 'undefined') {
     return;
   }
@@ -546,7 +602,15 @@ function exposeDebugInterface(camera: PerspectiveCamera, controls: OrbitControls
     }),
     getMaterialStates: () => lastMaterialStates,
     getModelStates: () => [],
-    hasUnloadGuard: () => unloadGuardActive
+    hasUnloadGuard: () => unloadGuardActive,
+    scaleModel: (id: string, scale: number) => {
+      const entry = getModels().find((model) => model.id === id);
+      if (!entry) {
+        return;
+      }
+      entry.object.scale.setScalar(scale);
+      entry.object.updateMatrixWorld(true);
+    }
   };
 }
 
@@ -564,6 +628,7 @@ declare global {
       hasUnloadGuard: () => boolean;
       hitTestViewport?: (x: number, y: number) => boolean;
       getActiveSculptTool?: () => string | null;
+      scaleModel?: (id: string, scale: number) => void;
     };
   }
 }
@@ -595,28 +660,12 @@ function collectMaterialStates(object: Object3D): MaterialState[] {
   return materials;
 }
 
-function getBoxCorners(box: Box3): Vector3[] {
-  const { min, max } = box;
-  return [
-    new Vector3(min.x, min.y, min.z),
-    new Vector3(min.x, min.y, max.z),
-    new Vector3(min.x, max.y, min.z),
-    new Vector3(min.x, max.y, max.z),
-    new Vector3(max.x, min.y, min.z),
-    new Vector3(max.x, min.y, max.z),
-    new Vector3(max.x, max.y, min.z),
-    new Vector3(max.x, max.y, max.z)
-  ];
-}
-
 type ModelEntry = {
   id: string;
   name: string;
   object: Object3D;
   visible: boolean;
   wireframe: boolean;
-  bounds: Box3;
-  boundsCorners: Vector3[];
 };
 
 type ModelPanelHandlers = {
@@ -901,6 +950,19 @@ function createToolsToggle(onToggle: () => void): HTMLButtonElement {
   icon.alt = 'Sculpt';
   button.appendChild(icon);
   return button;
+}
+
+function createSculptHighlight(): Mesh {
+  const geometry = new SphereGeometry(0.045, 16, 16);
+  const material = new MeshBasicMaterial({
+    color: '#8fd9ff',
+    transparent: true,
+    opacity: 0.65,
+    depthTest: false
+  });
+  const highlight = new Mesh(geometry, material);
+  highlight.visible = false;
+  return highlight;
 }
 
 type ToolControls = {

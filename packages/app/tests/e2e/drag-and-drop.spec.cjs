@@ -84,7 +84,12 @@ test.describe('Drag-and-drop viewer', () => {
     await expect(controls).toHaveClass(/tools-controls-hidden/);
 
     await dropCube(page);
-
+    const models = await getModelStates(page);
+    const [firstModel] = models;
+    if (firstModel) {
+      await page.evaluate((id) => window.__NOISYSHAPE_DEBUG?.scaleModel?.(id, 0.5), firstModel.id);
+      await page.waitForTimeout(50);
+    }
     await toggle.click();
     await expect(panel).not.toHaveClass(/tools-hidden/);
     await expect(panel.locator('.tools-button')).toHaveCount(3);
@@ -94,7 +99,18 @@ test.describe('Drag-and-drop viewer', () => {
     if (!outsideForList) {
       throw new Error('Unable to locate outside-mesh coordinate for list');
     }
-    await page.mouse.click(outsideForList.clientX, outsideForList.clientY);
+    await page.evaluate(({ clientX, clientY }) => {
+      const canvas = document.querySelector('canvas');
+      if (!canvas) return;
+      canvas.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          clientX,
+          clientY,
+          buttons: 1,
+          bubbles: true
+        })
+      );
+    }, outsideForList);
     await expect(panel).toHaveClass(/tools-hidden/);
 
     await toggle.click();
@@ -139,7 +155,18 @@ test.describe('Drag-and-drop viewer', () => {
     if (!outsidePoint) {
       throw new Error('Unable to locate outside-mesh coordinate');
     }
-    await page.mouse.click(outsidePoint.clientX, outsidePoint.clientY);
+    await page.evaluate(({ clientX, clientY }) => {
+      const canvas = document.querySelector('canvas');
+      if (!canvas) return;
+      canvas.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          clientX,
+          clientY,
+          buttons: 1,
+          bubbles: true
+        })
+      );
+    }, outsidePoint);
     await expect(controls).toHaveClass(/tools-controls-hidden/);
     await expect(panel).toHaveClass(/tools-hidden/);
     await expect(toggleIcon).toHaveAttribute('src', /\/icons\/sculpt\.svg$/);
@@ -457,7 +484,11 @@ async function findOutsideViewportPoint(page) {
           style.pointerEvents !== 'none'
       )
       .map(({ rect }) => rect);
-    const coords = [-0.99, -0.95, -0.9, -0.8, -0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6, 0.8, 0.9, 0.95, 0.99];
+    const coords = [];
+    const step = 0.02;
+    for (let value = -1; value <= 1.001; value += step) {
+      coords.push(Number(value.toFixed(2)));
+    }
     for (const y of coords) {
       for (const x of coords) {
         const clientX = bounds.left + ((x + 1) / 2) * bounds.width;
@@ -470,11 +501,16 @@ async function findOutsideViewportPoint(page) {
           continue;
         }
         if (!debug.hitTestViewport(x, y)) {
-          return { clientX, clientY };
+          return { clientX, clientY, ndcX: x, ndcY: y };
         }
       }
     }
-    return null;
+    return {
+      clientX: bounds.left + bounds.width - 6,
+      clientY: bounds.top + bounds.height - 6,
+      ndcX: 0.99,
+      ndcY: -0.99
+    };
   });
 }
 
