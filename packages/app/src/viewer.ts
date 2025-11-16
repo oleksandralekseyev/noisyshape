@@ -2,8 +2,11 @@ import {
   ACESFilmicToneMapping,
   AmbientLight,
   Box3,
+  BufferAttribute,
+  BufferGeometry,
   Color,
   DirectionalLight,
+  DoubleSide,
   GridHelper,
   LineBasicMaterial,
   LineSegments,
@@ -12,10 +15,10 @@ import {
   MeshStandardMaterial,
   Object3D,
   PerspectiveCamera,
+  Ray,
   Raycaster,
   Scene,
   SRGBColorSpace,
-  SphereGeometry,
   Vector2,
   Vector3,
   WebGLRenderer,
@@ -33,6 +36,7 @@ import {
   persistModel,
   type StoredModel
 } from './modelStorage';
+import { buildSculptAdjacency, type SculptAdjacency } from './sculptStructures';
 
 const SUPPORTED_EXTENSIONS = ['.glb', '.gltf', '.obj', '.stl', '.ply'];
 const normalizedBasePath = import.meta.env.BASE_URL.replace(/\/$/, '');
@@ -65,6 +69,7 @@ export function createViewer(root: HTMLElement): void {
   const overlay = createOverlay(allowTapImport ? '' : 'Drop 3D Models');
   const status = createStatus('Drop a .glb, .gltf, .obj, .stl, or .ply file');
   viewport.append(overlay, status);
+  const sculptMeshLookup = new Map<string, SculptMeshBinding>();
   let panelActionButton: HTMLButtonElement | null = null;
   let overlayAction: HTMLButtonElement | null = null;
 
@@ -158,6 +163,7 @@ export function createViewer(root: HTMLElement): void {
   const raycaster = new Raycaster();
   const pointer = new Vector2();
   type SceneIntersection = Intersection<Object3D>;
+  type PointerHighlight = { hit: SceneIntersection; ndc: { x: number; y: number } };
   const pickSceneIntersection = (ndcX: number, ndcY: number): SceneIntersection | null => {
     pointer.set(ndcX, ndcY);
     raycaster.setFromCamera(pointer, camera);
@@ -262,13 +268,19 @@ export function createViewer(root: HTMLElement): void {
   const applyModel = (object: Object3D, meta: { name: string }) => {
     object.name = meta.name;
     scene.add(object);
+    object.updateWorldMatrix(true, true);
+    const sculptBindings = collectSculptMeshes(object);
+    sculptBindings.forEach((binding) => sculptMeshLookup.set(binding.mesh.uuid, binding));
 
     const entry: ModelEntry = {
       id: createModelId(),
       name: meta.name,
       object,
       visible: true,
-      wireframe: false
+      wireframe: false,
+      sculpt: {
+        bindings: sculptBindings
+      }
     };
     models.push(entry);
 
@@ -328,13 +340,21 @@ export function createViewer(root: HTMLElement): void {
   const sculptIconSrc = iconPath('sculpt.svg');
 
   const sculptHighlight = createSculptHighlight();
-  scene.add(sculptHighlight);
+  scene.add(sculptHighlight.object);
+  const highlightTrianglesScratch: number[] = [];
+  const highlightQueue: number[] = [];
+  const startVertexWorld = new Vector3();
+  const workingVertexWorld = new Vector3();
+  const pointerOffsetX = new Vector2();
+  const pointerOffsetY = new Vector2();
+  const planeNormalScratch = new Vector3();
+  const planeHitScratch = new Vector3();
+  const planeDeltaScratch = new Vector3();
+  const radiusRaycaster = new Raycaster();
+  let lastPointerHit: PointerHighlight | null = null;
   const hideSculptHighlight = () => {
-    sculptHighlight.visible = false;
-  };
-  const showSculptHighlight = (point: Vector3) => {
-    sculptHighlight.position.copy(point);
-    sculptHighlight.visible = true;
+    sculptHighlight.hide();
+    lastPointerHit = null;
   };
   const toolsPanel = createToolsPanel(tools, {
     onSelectionChange: (tool) => {
@@ -352,6 +372,155 @@ export function createViewer(root: HTMLElement): void {
   host.appendChild(toolsPanel.element);
   const toolControls = createToolControls();
   host.appendChild(toolControls.element);
+  const computeWorldRadius = (context: PointerHighlight, radiusPx: number) => {
+    if (radiusPx <= 0) {
+      return 0;
+    }
+    const bounds = renderer.domElement.getBoundingClientRect();
+    if (bounds.width === 0 || bounds.height === 0) {
+      return 0;
+    }
+    const planeNormal = camera.getWorldDirection(planeNormalScratch).normalize();
+    const distances: number[] = [];
+    if (bounds.width > 0) {
+      pointerOffsetX.set(context.ndc.x + (radiusPx * 2) / bounds.width, context.ndc.y);
+      radiusRaycaster.setFromCamera(pointerOffsetX, camera);
+      const hitPoint = intersectRayWithPlane(
+        radiusRaycaster.ray,
+        context.hit.point,
+        planeNormal,
+        planeHitScratch,
+        planeDeltaScratch
+      );
+      if (hitPoint) {
+        distances.push(hitPoint.distanceTo(context.hit.point));
+      }
+    }
+    if (bounds.height > 0) {
+      pointerOffsetY.set(context.ndc.x, context.ndc.y + (radiusPx * 2) / bounds.height);
+      radiusRaycaster.setFromCamera(pointerOffsetY, camera);
+      const hitPoint = intersectRayWithPlane(
+        radiusRaycaster.ray,
+        context.hit.point,
+        planeNormal,
+        planeHitScratch,
+        planeDeltaScratch
+      );
+      if (hitPoint) {
+        distances.push(hitPoint.distanceTo(context.hit.point));
+      }
+    }
+    if (distances.length === 0) {
+      return 0;
+    }
+    const total = distances.reduce((sum, value) => sum + value, 0);
+    return total / distances.length;
+  };
+  const collectTrianglesWithinWorldRadius = (
+    binding: SculptMeshBinding,
+    startVertexIndex: number,
+    worldRadius: number
+  ) => {
+    highlightTrianglesScratch.length = 0;
+    if (worldRadius <= 0) {
+      return highlightTrianglesScratch;
+    }
+    const positionAttr = binding.geometry.getAttribute('position') as BufferAttribute | undefined;
+    if (!positionAttr) {
+      return highlightTrianglesScratch;
+    }
+    const radiusSq = worldRadius * worldRadius;
+    const visitIds = binding.vertexVisitIds;
+    const triangleVisitIds = binding.triangleVisitIds;
+    let token = binding.visitToken;
+    if (token === 0xffffffff) {
+      visitIds.fill(0);
+      triangleVisitIds.fill(0);
+      token = 1;
+    }
+    binding.mesh.updateWorldMatrix(true, false);
+    highlightQueue.length = 0;
+    highlightQueue.push(startVertexIndex);
+    visitIds[startVertexIndex] = token;
+    getVertexWorldPosition(binding.mesh, positionAttr, startVertexIndex, startVertexWorld);
+    for (let head = 0; head < highlightQueue.length; head += 1) {
+      const vertexIndex = highlightQueue[head];
+      getVertexWorldPosition(binding.mesh, positionAttr, vertexIndex, workingVertexWorld);
+      const distanceSq = workingVertexWorld.distanceToSquared(startVertexWorld);
+      if (distanceSq > radiusSq) {
+        continue;
+      }
+      const touchingTriangles = binding.adjacency.vertexTriangles[vertexIndex];
+      for (let i = 0; i < touchingTriangles.length; i += 1) {
+        const triIndex = touchingTriangles[i];
+        if (triangleVisitIds[triIndex] === token) {
+          continue;
+        }
+        triangleVisitIds[triIndex] = token;
+        highlightTrianglesScratch.push(triIndex);
+      }
+      const neighbors = binding.adjacency.vertexNeighbors[vertexIndex];
+      for (let i = 0; i < neighbors.length; i += 1) {
+        const neighbor = neighbors[i];
+        if (visitIds[neighbor] === token) {
+          continue;
+        }
+        visitIds[neighbor] = token;
+        highlightQueue.push(neighbor);
+      }
+    }
+    binding.visitToken = token + 1;
+    if (binding.visitToken === 0) {
+      binding.visitToken = 1;
+      visitIds.fill(0);
+      triangleVisitIds.fill(0);
+    }
+    return highlightTrianglesScratch;
+  };
+  const updateSculptHighlightForHit = (context: PointerHighlight | null) => {
+    if (!context) {
+      hideSculptHighlight();
+      return;
+    }
+    const mesh = findHitMesh(context.hit.object);
+    if (!mesh) {
+      hideSculptHighlight();
+      return;
+    }
+    const binding = sculptMeshLookup.get(mesh.uuid);
+    if (!binding) {
+      hideSculptHighlight();
+      return;
+    }
+    const radiusPx = toolControls.getRadius();
+    if (radiusPx <= 0) {
+      hideSculptHighlight();
+      return;
+    }
+    const worldRadius = computeWorldRadius(context, radiusPx);
+    if (worldRadius <= 0) {
+      hideSculptHighlight();
+      return;
+    }
+    mesh.updateWorldMatrix(true, false);
+    const startVertexIndex = findClosestVertexIndex(mesh, context.hit);
+    if (startVertexIndex === null) {
+      hideSculptHighlight();
+      return;
+    }
+    const triangles = collectTrianglesWithinWorldRadius(binding, startVertexIndex, worldRadius);
+    if (triangles.length === 0) {
+      hideSculptHighlight();
+      return;
+    }
+    sculptHighlight.renderTriangles(mesh, triangles);
+    lastPointerHit = context;
+  };
+  toolControls.onRadiusChange(() => {
+    if (lastPointerHit) {
+      updateSculptHighlightForHit(lastPointerHit);
+    }
+  });
   let toolsOpen = false;
   const toolsToggle = createToolsToggle(() => {
     toolsOpen = !toolsOpen;
@@ -407,7 +576,7 @@ export function createViewer(root: HTMLElement): void {
     const hit = pickSceneIntersection(coords.x, coords.y);
     if (hit) {
       if (activeTool && !toolsOpen) {
-        showSculptHighlight(hit.point);
+        updateSculptHighlightForHit({ hit, ndc: coords });
       }
       return;
     }
@@ -432,7 +601,7 @@ export function createViewer(root: HTMLElement): void {
     }
     const hit = pickSceneIntersection(coords.x, coords.y);
     if (hit) {
-      showSculptHighlight(hit.point);
+      updateSculptHighlightForHit({ hit, ndc: coords });
     } else {
       hideSculptHighlight();
     }
@@ -650,6 +819,19 @@ type MaterialState = {
   wireframe: boolean;
 };
 
+type SculptMeshBinding = {
+  mesh: Mesh;
+  geometry: BufferGeometry;
+  adjacency: SculptAdjacency;
+  vertexVisitIds: Uint32Array;
+  triangleVisitIds: Uint32Array;
+  visitToken: number;
+};
+
+type SculptState = {
+  bindings: SculptMeshBinding[];
+};
+
 function collectMaterialStates(object: Object3D): MaterialState[] {
   const materials: MaterialState[] = [];
   object.traverse((child) => {
@@ -675,6 +857,7 @@ type ModelEntry = {
   object: Object3D;
   visible: boolean;
   wireframe: boolean;
+  sculpt: SculptState;
 };
 
 type ModelPanelHandlers = {
@@ -961,22 +1144,183 @@ function createToolsToggle(onToggle: () => void): HTMLButtonElement {
   return button;
 }
 
-function createSculptHighlight(): Mesh {
-  const geometry = new SphereGeometry(0.045, 16, 16);
+function intersectRayWithPlane(
+  ray: Ray,
+  planePoint: Vector3,
+  planeNormal: Vector3,
+  target: Vector3,
+  delta: Vector3
+): Vector3 | null {
+  const denom = planeNormal.dot(ray.direction);
+  if (Math.abs(denom) < 1e-6) {
+    return null;
+  }
+  delta.copy(planePoint).sub(ray.origin);
+  const distance = delta.dot(planeNormal) / denom;
+  if (distance < 0) {
+    return null;
+  }
+  target.copy(ray.direction).multiplyScalar(distance).add(ray.origin);
+  return target;
+}
+
+type SculptHighlightInstance = {
+  object: Mesh;
+  hide: () => void;
+  renderTriangles: (target: Mesh, triangles: number[]) => void;
+};
+
+function createSculptHighlight(): SculptHighlightInstance {
+  const geometry = new BufferGeometry();
+  let positionAttribute = new BufferAttribute(new Float32Array(0), 3);
+  geometry.setAttribute('position', positionAttribute);
   const material = new MeshBasicMaterial({
     color: '#8fd9ff',
     transparent: true,
-    opacity: 0.65,
-    depthTest: false
+    opacity: 0.45,
+    depthTest: false,
+    depthWrite: false,
+    side: DoubleSide
   });
   const highlight = new Mesh(geometry, material);
   highlight.visible = false;
-  return highlight;
+  highlight.renderOrder = 10;
+  const localVertex = new Vector3();
+  const worldVertex = new Vector3();
+  const ensureCapacity = (vertexCount: number) => {
+    const requiredFloats = vertexCount * 3;
+    if ((positionAttribute.array as Float32Array).length === requiredFloats) {
+      return;
+    }
+    positionAttribute = new BufferAttribute(new Float32Array(requiredFloats), 3);
+    geometry.setAttribute('position', positionAttribute);
+  };
+  return {
+    object: highlight,
+    hide: () => {
+      highlight.visible = false;
+    },
+    renderTriangles: (target, triangles) => {
+      if (triangles.length === 0) {
+        highlight.visible = false;
+        return;
+      }
+      const sourceGeometry = target.geometry as BufferGeometry;
+      const positions = sourceGeometry.getAttribute('position') as BufferAttribute | undefined;
+      if (!positions) {
+        highlight.visible = false;
+        return;
+      }
+      const indexAttr = sourceGeometry.getIndex();
+      ensureCapacity(triangles.length * 3);
+      const buffer = positionAttribute.array as Float32Array;
+      let offset = 0;
+      target.updateWorldMatrix(true, false);
+      for (let i = 0; i < triangles.length; i += 1) {
+        const triIndex = triangles[i];
+        const base = triIndex * 3;
+        for (let corner = 0; corner < 3; corner += 1) {
+          const vertexIndex = indexAttr ? indexAttr.getX(base + corner) : base + corner;
+          localVertex.fromBufferAttribute(positions, vertexIndex);
+          worldVertex.copy(localVertex).applyMatrix4(target.matrixWorld);
+          buffer[offset++] = worldVertex.x;
+          buffer[offset++] = worldVertex.y;
+          buffer[offset++] = worldVertex.z;
+        }
+      }
+      positionAttribute.needsUpdate = true;
+      geometry.computeBoundingSphere();
+      highlight.visible = true;
+    }
+  };
+}
+
+function collectSculptMeshes(root: Object3D): SculptMeshBinding[] {
+  const bindings: SculptMeshBinding[] = [];
+  root.traverse((child) => {
+    const mesh = child as Mesh;
+    if (!mesh.isMesh) {
+      return;
+    }
+    const geometry = mesh.geometry as BufferGeometry;
+    const positionAttr = geometry.getAttribute('position');
+    if (!geometry || !positionAttr) {
+      return;
+    }
+    bindings.push({
+      mesh,
+      geometry,
+      adjacency: buildSculptAdjacency(geometry),
+      vertexVisitIds: new Uint32Array(positionAttr.count),
+      triangleVisitIds: new Uint32Array(getTriangleCount(geometry)),
+      visitToken: 1
+    });
+  });
+  return bindings;
+}
+
+function getTriangleCount(geometry: BufferGeometry): number {
+  const indexAttr = geometry.getIndex();
+  if (indexAttr) {
+    return indexAttr.count / 3;
+  }
+  const positionAttr = geometry.getAttribute('position');
+  return positionAttr ? positionAttr.count / 3 : 0;
+}
+
+function findHitMesh(object: Object3D): Mesh | null {
+  let current: Object3D | null = object;
+  while (current) {
+    const mesh = current as Mesh;
+    if (mesh.isMesh) {
+      return mesh;
+    }
+    current = current.parent;
+  }
+  return null;
+}
+
+const vertexLocalScratch = new Vector3();
+const vertexWorldScratch = new Vector3();
+
+function getVertexWorldPosition(
+  mesh: Mesh,
+  positionAttr: BufferAttribute,
+  vertexIndex: number,
+  target: Vector3
+): Vector3 {
+  vertexLocalScratch.fromBufferAttribute(positionAttr, vertexIndex);
+  return target.copy(vertexLocalScratch).applyMatrix4(mesh.matrixWorld);
+}
+
+function findClosestVertexIndex(mesh: Mesh, hit: Intersection<Object3D>): number | null {
+  const geometry = mesh.geometry as BufferGeometry;
+  const positionAttr = geometry.getAttribute('position') as BufferAttribute | undefined;
+  const faceIndex = hit.faceIndex;
+  if (!positionAttr || faceIndex == null || faceIndex < 0) {
+    return null;
+  }
+  const indexAttr = geometry.getIndex();
+  const triOffset = faceIndex * 3;
+  let closestIndex: number | null = null;
+  let minDistance = Infinity;
+  for (let i = 0; i < 3; i += 1) {
+    const vertexIndex = indexAttr ? Number(indexAttr.getX(triOffset + i)) : triOffset + i;
+    getVertexWorldPosition(mesh, positionAttr, vertexIndex, vertexWorldScratch);
+    const distance = vertexWorldScratch.distanceToSquared(hit.point);
+    if (distance < minDistance) {
+      minDistance = distance;
+      closestIndex = vertexIndex;
+    }
+  }
+  return closestIndex;
 }
 
 type ToolControls = {
   element: HTMLElement;
   setVisible: (visible: boolean) => void;
+  getRadius: () => number;
+  onRadiusChange: (listener: (value: number) => void) => void;
 };
 
 function createToolControls(): ToolControls {
@@ -1005,18 +1349,29 @@ function createToolControls(): ToolControls {
     caption.className = 'tools-control-label';
     caption.textContent = options.label;
     wrapper.append(track, caption);
-    return wrapper;
+    return { element: wrapper, input };
   };
 
-  container.append(
-    createControl({ label: 'Radius', min: 1, max: 100, step: 1, value: 25 }),
-    createControl({ label: 'Value', min: 0, max: 100, step: 1, value: 50 })
-  );
+  const radiusControl = createControl({ label: 'Radius', min: 1, max: 100, step: 1, value: 40 });
+  const valueControl = createControl({ label: 'Value', min: 0, max: 100, step: 1, value: 50 });
+  container.append(radiusControl.element, valueControl.element);
+
+  const radiusListeners = new Set<(value: number) => void>();
+  const getRadius = () => Number(radiusControl.input.value);
+  const notifyRadius = () => {
+    const value = getRadius();
+    radiusListeners.forEach((listener) => listener(value));
+  };
+  radiusControl.input.addEventListener('input', notifyRadius);
 
   return {
     element: container,
     setVisible: (visible: boolean) => {
       container.classList.toggle('tools-controls-hidden', !visible);
+    },
+    getRadius,
+    onRadiusChange: (listener: (value: number) => void) => {
+      radiusListeners.add(listener);
     }
   };
 }
