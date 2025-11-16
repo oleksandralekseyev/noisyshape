@@ -20,6 +20,7 @@ Automatically publish the Vite client in `packages/app` to GitHub Pages whenever
 
 - Vite is configured with `base: './'` so the generated HTML references `./assets/...`, which keeps asset URLs relative to the deployed `index.html`. This makes the static bundle work whether it is hosted at `https://<user>.github.io/` or `https://<user>.github.io/noisyshape/`.
 - The `packages/app/tests/validate-vite-base.mjs` check runs with `pnpm test:config` inside `pnpm test` to prevent regressions that could reintroduce absolute `/assets/...` references.
+- UI code references icons via `import.meta.env.BASE_URL` helpers so `/icons/*.svg` requests stay relative to the deployed base path, and `packages/app/tests/validate-icon-paths.mjs` ensures future edits do not fall back to root-relative `/icons/...` URLs.
 
 ## Operational Notes
 

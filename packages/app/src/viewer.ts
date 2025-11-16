@@ -35,6 +35,12 @@ import {
 } from './modelStorage';
 
 const SUPPORTED_EXTENSIONS = ['.glb', '.gltf', '.obj', '.stl', '.ply'];
+const normalizedBasePath = import.meta.env.BASE_URL.replace(/\/$/, '');
+const withBasePath = (relativePath: string) => {
+  const cleanedPath = relativePath.replace(/^\//, '');
+  return `${normalizedBasePath}/${cleanedPath}`;
+};
+const iconPath = (filename: string) => withBasePath(`icons/${filename}`);
 
 let lastMaterialStates: MaterialState[] = [];
 const UNLOAD_WARNING = 'You have models loaded. Leaving will lose them.';
@@ -313,12 +319,13 @@ export function createViewer(root: HTMLElement): void {
   refreshPanel();
   void restorePersistedModels();
 
-  const tools = [
-    { id: 'smooth', label: 'Smooth', icon: '/icons/smooth.svg' },
-    { id: 'add', label: 'Add', icon: '/icons/add.svg' },
-    { id: 'remove', label: 'Remove', icon: '/icons/remove.svg' }
+  const tools: ToolDescriptor[] = [
+    { id: 'smooth', label: 'Smooth', icon: iconPath('smooth.svg') },
+    { id: 'add', label: 'Add', icon: iconPath('add.svg') },
+    { id: 'remove', label: 'Remove', icon: iconPath('remove.svg') }
   ];
   let activeTool: ToolDescriptor | null = null;
+  const sculptIconSrc = iconPath('sculpt.svg');
 
   const sculptHighlight = createSculptHighlight();
   scene.add(sculptHighlight);
@@ -358,7 +365,7 @@ export function createViewer(root: HTMLElement): void {
       toggleIcon.src = descriptor.icon;
       toggleIcon.alt = descriptor.label;
     } else {
-      toggleIcon.src = '/icons/sculpt.svg';
+      toggleIcon.src = sculptIconSrc;
       toggleIcon.alt = 'Sculpt';
     }
   };
@@ -948,7 +955,7 @@ function createToolsToggle(onToggle: () => void): HTMLButtonElement {
   button.setAttribute('aria-expanded', 'false');
   button.addEventListener('click', onToggle);
   const icon = document.createElement('img');
-  icon.src = '/icons/sculpt.svg';
+  icon.src = iconPath('sculpt.svg');
   icon.alt = 'Sculpt';
   button.appendChild(icon);
   return button;

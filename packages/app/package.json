@@ -11,7 +11,7 @@
     "test": "pnpm test:assets && pnpm test:config && pnpm test:e2e",
     "test:e2e": "playwright test",
     "test:assets": "node ./tests/validate-assets.mjs",
-    "test:config": "node ./tests/validate-vite-base.mjs"
+    "test:config": "node ./tests/validate-vite-base.mjs && node ./tests/validate-icon-paths.mjs"
   },
   "dependencies": {
     "three": "^0.161.0"
