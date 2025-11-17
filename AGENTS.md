@@ -45,3 +45,4 @@ docker run … emscripten/emsdk:latest   # containerized WASM build (see docs/wa
 - Commit format: `<scope>: <concise action>` (examples: `app: add orbit gizmo`, `core-wasm: optimize sdf blend`). Reference issue IDs when relevant.
 - PR checklist: summary, test evidence (`pnpm test`, `cmake --build …`), screenshots for UI-facing changes, and mention of updated docs/config.
 - Keep UI and WASM changes in separate commits where possible. Request reviewers from both areas when touching shared bindings or ABI.
+- Split large source files into modules that stay under 500 lines; refactor or extract helpers whenever a file grows beyond that threshold.

@@ -4,6 +4,7 @@ packages/app/public/wasm/*
 !packages/app/public/wasm/.gitkeep
 packages/app/.vite
 packages/app/.DS_Store
+packages/app/tsconfig.tsbuildinfo
 packages/core-wasm/build
 packages/core-wasm/dist
 packages/app/test-results
