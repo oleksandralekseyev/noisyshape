@@ -8,3 +8,6 @@ packages/app/tsconfig.tsbuildinfo
 packages/core-wasm/build
 packages/core-wasm/dist
 packages/app/test-results
+__pycache__/
+*.py[cod]
+*$py.class

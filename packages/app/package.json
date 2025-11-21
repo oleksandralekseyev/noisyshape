@@ -8,10 +8,11 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "lint": "eslint . --ext ts --max-warnings=0",
-    "test": "pnpm test:assets && pnpm test:config && pnpm test:e2e",
+    "test": "pnpm test:assets && pnpm test:config && pnpm test:sculpt && pnpm test:e2e",
     "test:e2e": "playwright test",
     "test:assets": "node ./tests/validate-assets.mjs",
-    "test:config": "node ./tests/validate-vite-base.mjs && node ./tests/validate-icon-paths.mjs"
+    "test:config": "node ./tests/validate-vite-base.mjs && node ./tests/validate-icon-paths.mjs",
+    "test:sculpt": "pnpm exec ts-node --esm ./tests/validate-sculpt-highlight.ts"
   },
   "dependencies": {
     "three": "^0.161.0"

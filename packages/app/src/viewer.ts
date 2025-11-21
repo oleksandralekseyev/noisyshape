@@ -34,7 +34,7 @@ import {
 } from './viewer/debug';
 import { setModelVisibility, setModelWireframe } from './viewer/materials';
 import { buildModelLoaders, findModelLoader, type ModelLoader } from './viewer/modelLoaders';
-import { smoothAtIntersection } from './viewer/sculpting';
+import { createSculptHighlight, smoothAtIntersection } from './viewer/sculpting';
 import {
   createOverlay,
   hideOverlay,
@@ -110,6 +110,8 @@ export function createViewer(root: HTMLElement): void {
   );
 
   setupLights(scene);
+
+  const sculptHighlight = createSculptHighlight(scene);
 
   const modelLoaders: ModelLoader[] = buildModelLoaders({
     gltfLoader: new GLTFLoader(),
@@ -338,6 +340,17 @@ export function createViewer(root: HTMLElement): void {
   let activeTool: ToolDescriptor | null = null;
   const sculptIconSrc = iconPath('sculpt.svg');
   const activeSculptPointers = new Set<number>();
+  const isSculptToolActive = () => !!activeTool && activeTool.id === 'smooth' && !toolsOpen;
+  const refreshHighlight = (
+    hit: SceneIntersection | null,
+    pointerType: string
+  ) => {
+    if (hit && isSculptToolActive()) {
+      sculptHighlight.update({ hit, camera, renderer, pointerType });
+    } else {
+      sculptHighlight.clear();
+    }
+  };
   let toolsPanel: ReturnType<typeof createToolsPanel>;
   let toolsOpen = false;
   const applyActiveTool = (
@@ -352,6 +365,9 @@ export function createViewer(root: HTMLElement): void {
       toolsOpen = false;
     } else {
       activeSculptPointers.clear();
+    }
+    if (!tool || tool.id !== 'smooth') {
+      sculptHighlight.clear();
     }
     updateToolsVisibility();
   };
@@ -385,6 +401,9 @@ export function createViewer(root: HTMLElement): void {
     toolsPanel.setVisible(toolsOpen);
     toolsToggle.setAttribute('aria-expanded', String(toolsOpen));
     toolsToggle.setAttribute('aria-label', toolsOpen ? 'Hide sculpt tools' : 'Show sculpt tools');
+    if (toolsOpen) {
+      sculptHighlight.clear();
+    }
     updateToggleIcon();
   };
   updateToolsVisibility();
@@ -409,10 +428,12 @@ export function createViewer(root: HTMLElement): void {
   renderer.domElement.addEventListener('pointerdown', (event) => {
     const coords = getPointerNdc(event);
     if (!coords) {
+      sculptHighlight.clear();
       return;
     }
     const hit = pickSceneIntersection(coords.x, coords.y);
-    if (hit && activeTool && !toolsOpen && activeTool.id === 'smooth') {
+    refreshHighlight(hit, event.pointerType);
+    if (hit && isSculptToolActive()) {
       activeSculptPointers.add(event.pointerId);
       renderer.domElement.setPointerCapture(event.pointerId);
       smoothAtIntersection({
@@ -421,6 +442,7 @@ export function createViewer(root: HTMLElement): void {
         renderer,
         pointerType: event.pointerType
       });
+      refreshHighlight(hit, event.pointerType);
       return;
     }
 
@@ -438,18 +460,23 @@ export function createViewer(root: HTMLElement): void {
   });
 
   renderer.domElement.addEventListener('pointermove', (event) => {
-    if (!activeSculptPointers.has(event.pointerId)) {
-      return;
-    }
-    if (toolsOpen || !activeTool || activeTool.id !== 'smooth') {
-      releasePointer(event.pointerId);
-      return;
-    }
     const coords = getPointerNdc(event);
     if (!coords) {
+      sculptHighlight.clear();
+      if (activeSculptPointers.has(event.pointerId)) {
+        releasePointer(event.pointerId);
+      }
       return;
     }
     const hit = pickSceneIntersection(coords.x, coords.y);
+    refreshHighlight(hit, event.pointerType);
+    if (!activeSculptPointers.has(event.pointerId)) {
+      return;
+    }
+    if (!isSculptToolActive()) {
+      releasePointer(event.pointerId);
+      return;
+    }
     if (hit) {
       smoothAtIntersection({
         hit,
@@ -457,6 +484,7 @@ export function createViewer(root: HTMLElement): void {
         renderer,
         pointerType: event.pointerType
       });
+      refreshHighlight(hit, event.pointerType);
     }
   });
 
@@ -470,6 +498,7 @@ export function createViewer(root: HTMLElement): void {
   renderer.domElement.addEventListener('pointercancel', endPointer);
   renderer.domElement.addEventListener('pointerleave', () => {
     activeSculptPointers.clear();
+    sculptHighlight.clear();
   });
 
   if (typeof window !== 'undefined') {
