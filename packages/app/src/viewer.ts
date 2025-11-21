@@ -426,7 +426,7 @@ export function createViewer(root: HTMLElement): void {
   };
 
   const pendingResetPointers = new Map<number, { x: number; y: number }>();
-  const RESET_MOVE_THRESHOLD = 5;
+  const RESET_MOVE_THRESHOLD = 5; // pixels - small enough to detect intentional drags while ignoring jitter
 
   renderer.domElement.addEventListener('pointerdown', (event) => {
     const coords = getPointerNdc(event);
