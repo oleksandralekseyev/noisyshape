@@ -77,11 +77,12 @@ test.describe('Drag-and-drop viewer', () => {
     const toggle = page.locator('.tools-toggle');
     const toggleIcon = toggle.locator('img');
     const panel = page.locator('.tools-panel');
-    const controls = page.locator('.tools-controls');
     await expect(toggle).toBeVisible();
     await expect(toggleIcon).toHaveAttribute('src', /\/icons\/sculpt\.svg$/);
     await expect(panel).toHaveClass(/tools-hidden/);
-    await expect(controls).toHaveClass(/tools-controls-hidden/);
+    await expect.poll(() =>
+      page.evaluate(() => window.__NOISYSHAPE_DEBUG?.getActiveSculptTool?.() ?? null)
+    ).toBe(null);
 
     await dropCube(page);
     const models = await getModelStates(page);
@@ -93,7 +94,6 @@ test.describe('Drag-and-drop viewer', () => {
     await toggle.click();
     await expect(panel).not.toHaveClass(/tools-hidden/);
     await expect(panel.locator('.tools-button')).toHaveCount(3);
-    await expect(controls).toHaveClass(/tools-controls-hidden/);
 
     const outsideForList = await findOutsideViewportPoint(page);
     if (!outsideForList) {
@@ -119,25 +119,22 @@ test.describe('Drag-and-drop viewer', () => {
     const firstTool = panel.locator('.tools-button').first();
     await firstTool.click();
     await expect(panel).toHaveClass(/tools-hidden/);
-    await expect(controls).not.toHaveClass(/tools-controls-hidden/);
-    await expect(controls.locator('.tools-control')).toHaveCount(2);
-    await expect(controls.locator('.tools-control-label')).toHaveText(['Radius', 'Value']);
     await expect(toggleIcon).toHaveAttribute('src', /\/icons\/smooth\.svg$/);
+    await expect.poll(() =>
+      page.evaluate(() => window.__NOISYSHAPE_DEBUG?.getActiveSculptTool?.() ?? null)
+    ).toBe('smooth');
 
     await toggle.click();
     await expect(panel).not.toHaveClass(/tools-hidden/);
-    await expect(controls).toHaveClass(/tools-controls-hidden/);
     await expect(toggleIcon).toHaveAttribute('src', /\/icons\/sculpt\.svg$/);
     await toggle.click();
     await expect(panel).toHaveClass(/tools-hidden/);
-    await expect(controls).not.toHaveClass(/tools-controls-hidden/);
     await expect(toggleIcon).toHaveAttribute('src', /\/icons\/smooth\.svg$/);
 
     await toggle.click();
     await expect(panel).not.toHaveClass(/tools-hidden/);
     await firstTool.click();
     await expect(panel).toHaveClass(/tools-hidden/);
-    await expect(controls).not.toHaveClass(/tools-controls-hidden/);
 
     const canvas = page.locator('canvas');
     if (!(await canvas.boundingBox())) {
@@ -167,9 +164,11 @@ test.describe('Drag-and-drop viewer', () => {
         })
       );
     }, outsidePoint);
-    await expect(controls).toHaveClass(/tools-controls-hidden/);
     await expect(panel).toHaveClass(/tools-hidden/);
     await expect(toggleIcon).toHaveAttribute('src', /\/icons\/sculpt\.svg$/);
+    await expect.poll(() =>
+      page.evaluate(() => window.__NOISYSHAPE_DEBUG?.getActiveSculptTool?.() ?? null)
+    ).toBe(null);
   });
 
   test('restores every loaded model after reload', async ({ page }) => {
