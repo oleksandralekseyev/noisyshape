@@ -425,6 +425,9 @@ export function createViewer(root: HTMLElement): void {
     activeSculptPointers.delete(pointerId);
   };
 
+  const pendingResetPointers = new Map<number, { x: number; y: number }>();
+  const RESET_MOVE_THRESHOLD = 5;
+
   renderer.domElement.addEventListener('pointerdown', (event) => {
     const coords = getPointerNdc(event);
     if (!coords) {
@@ -450,12 +453,13 @@ export function createViewer(root: HTMLElement): void {
       return;
     }
 
-    if (activeTool) {
-      applyActiveTool(null);
-    }
     if (toolsOpen) {
       toolsOpen = false;
       updateToolsVisibility();
+    }
+
+    if (activeTool) {
+      pendingResetPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     }
   });
 
@@ -470,6 +474,16 @@ export function createViewer(root: HTMLElement): void {
     }
     const hit = pickSceneIntersection(coords.x, coords.y);
     refreshHighlight(hit, event.pointerType);
+
+    const pendingReset = pendingResetPointers.get(event.pointerId);
+    if (pendingReset) {
+      const dx = Math.abs(event.clientX - pendingReset.x);
+      const dy = Math.abs(event.clientY - pendingReset.y);
+      if (dx > RESET_MOVE_THRESHOLD || dy > RESET_MOVE_THRESHOLD) {
+        pendingResetPointers.delete(event.pointerId);
+      }
+    }
+
     if (!activeSculptPointers.has(event.pointerId)) {
       return;
     }
@@ -492,6 +506,13 @@ export function createViewer(root: HTMLElement): void {
     if (activeSculptPointers.has(event.pointerId)) {
       releasePointer(event.pointerId);
     }
+
+    if (pendingResetPointers.has(event.pointerId)) {
+      pendingResetPointers.delete(event.pointerId);
+      if (activeTool) {
+        applyActiveTool(null);
+      }
+    }
   };
 
   renderer.domElement.addEventListener('pointerup', endPointer);
@@ -499,6 +520,7 @@ export function createViewer(root: HTMLElement): void {
   renderer.domElement.addEventListener('pointerleave', () => {
     activeSculptPointers.clear();
     sculptHighlight.clear();
+    pendingResetPointers.clear();
   });
 
   if (typeof window !== 'undefined') {

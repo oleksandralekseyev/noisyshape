@@ -163,12 +163,96 @@ test.describe('Drag-and-drop viewer', () => {
           bubbles: true
         })
       );
+      canvas.dispatchEvent(
+        new PointerEvent('pointerup', {
+          clientX,
+          clientY,
+          bubbles: true
+        })
+      );
     }, outsidePoint);
     await expect(panel).toHaveClass(/tools-hidden/);
     await expect(toggleIcon).toHaveAttribute('src', /\/icons\/sculpt\.svg$/);
     await expect.poll(() =>
       page.evaluate(() => window.__NOISYSHAPE_DEBUG?.getActiveSculptTool?.() ?? null)
     ).toBe(null);
+  });
+
+  test('rotating model outside the mesh does not reset the active tool', async ({ page }) => {
+    await openEditor(page);
+    const toggle = page.locator('.tools-toggle');
+    const toggleIcon = toggle.locator('img');
+    const panel = page.locator('.tools-panel');
+
+    await dropCube(page);
+    const models = await getModelStates(page);
+    const [firstModel] = models;
+    if (firstModel) {
+      await page.evaluate((id) => window.__NOISYSHAPE_DEBUG?.scaleModel?.(id, 0.5), firstModel.id);
+      await page.waitForTimeout(50);
+    }
+
+    await toggle.click();
+    await expect(panel).not.toHaveClass(/tools-hidden/);
+
+    const firstTool = panel.locator('.tools-button').first();
+    await firstTool.click();
+    await expect(panel).toHaveClass(/tools-hidden/);
+    await expect(toggleIcon).toHaveAttribute('src', /\/icons\/smooth\.svg$/);
+    await expect.poll(() =>
+      page.evaluate(() => window.__NOISYSHAPE_DEBUG?.getActiveSculptTool?.() ?? null)
+    ).toBe('smooth');
+
+    const canvas = page.locator('canvas');
+    const sidebarToggle = page.locator('.panel-toggle');
+    const sidebar = page.locator('.sidebar');
+    const isSidebarHidden = await sidebar.evaluate((el) =>
+      el.classList.contains('sidebar-hidden')
+    );
+    if (!isSidebarHidden) {
+      await sidebarToggle.click();
+    }
+
+    const outsidePoint = await findOutsideViewportPoint(page);
+    if (!outsidePoint) {
+      throw new Error('Unable to locate outside-mesh coordinate for drag');
+    }
+
+    await page.evaluate(({ clientX, clientY }) => {
+      const canvas = document.querySelector('canvas');
+      if (!canvas) return;
+      canvas.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          clientX,
+          clientY,
+          pointerId: 1,
+          buttons: 1,
+          bubbles: true
+        })
+      );
+      canvas.dispatchEvent(
+        new PointerEvent('pointermove', {
+          clientX: clientX + 50,
+          clientY: clientY + 50,
+          pointerId: 1,
+          buttons: 1,
+          bubbles: true
+        })
+      );
+      canvas.dispatchEvent(
+        new PointerEvent('pointerup', {
+          clientX: clientX + 50,
+          clientY: clientY + 50,
+          pointerId: 1,
+          bubbles: true
+        })
+      );
+    }, outsidePoint);
+
+    await expect(toggleIcon).toHaveAttribute('src', /\/icons\/smooth\.svg$/);
+    await expect.poll(() =>
+      page.evaluate(() => window.__NOISYSHAPE_DEBUG?.getActiveSculptTool?.() ?? null)
+    ).toBe('smooth');
   });
 
   test('restores every loaded model after reload', async ({ page }) => {
