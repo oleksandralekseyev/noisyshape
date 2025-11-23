@@ -122,6 +122,12 @@ export function createViewer(root: HTMLElement): void {
     plyLoader: new PLYLoader()
   });
 
+  const describeError = (error: unknown) => {
+    if (error instanceof Error && error.message) return error.message;
+    if (typeof error === 'string') return error;
+    return 'Unknown error';
+  };
+
   const handleFile = async (file: File) => {
     if (!isSupported(file.name)) {
       statusMessage(status, 'Unsupported file. Use .glb, .gltf, .obj, .stl, or .ply', true);
@@ -140,7 +146,7 @@ export function createViewer(root: HTMLElement): void {
       void persistModel(file);
     } catch (error) {
       console.error(error);
-      statusMessage(status, 'Failed to load model. Check the console for details.', true);
+      statusMessage(status, `Failed to load ${file.name}: ${describeError(error)}`, true);
     }
   };
 
@@ -325,8 +331,15 @@ export function createViewer(root: HTMLElement): void {
     if (!loader) {
       throw new Error(`No loader registered for ${entry.name}`);
     }
-    const object = await loader.loadFromDataUrl(entry.name, entry.dataUrl);
-    applyModel(object, { name: entry.name });
+    try {
+      const object = await loader.loadFromDataUrl(entry.name, entry.dataUrl);
+      applyModel(object, { name: entry.name });
+      statusMessage(status, '');
+    } catch (error) {
+      console.error(error);
+      statusMessage(status, `Failed to restore ${entry.name}: ${describeError(error)}`, true);
+      throw error;
+    }
   };
 
   setupDragAndDrop(viewport, handleFile);
