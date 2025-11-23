@@ -1,13 +1,18 @@
-import { AmbientLight, Box3, DirectionalLight, Scene, Vector3, type Object3D, type PerspectiveCamera } from 'three';
+import {
+  AmbientLight,
+  Box3,
+  HemisphereLight,
+  Scene,
+  Vector3,
+  type Object3D,
+  type PerspectiveCamera
+} from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 export function setupLights(scene: Scene): void {
-  const ambient = new AmbientLight('#7f8c8d', 0.8);
-  const key = new DirectionalLight('#ffffff', 1.2);
-  key.position.set(5, 10, 7);
-  const fill = new DirectionalLight('#6bb3ff', 0.6);
-  fill.position.set(-6, 5, -4);
-  scene.add(ambient, key, fill);
+  const ambient = new AmbientLight('#9da7ad', 0.9);
+  const hemisphere = new HemisphereLight('#dce7ff', '#1f1f23', 1.1);
+  scene.add(ambient, hemisphere);
 }
 
 export function fitCameraToObject(

@@ -43,6 +43,7 @@ import {
   createFilePicker
 } from './viewer/ui';
 import { supportsTapImport, isSupported, createModelId } from './viewer/support';
+import { resolveSculptIntent, type SculptPointerIntent } from './viewer/inputModes';
 
 const normalizedBasePath = import.meta.env.BASE_URL.replace(/\/$/, '');
 const withBasePath = (relativePath: string) => {
@@ -101,6 +102,7 @@ export function createViewer(root: HTMLElement): void {
   controls.enableDamping = true;
   controls.enablePan = true;
   controls.enableZoom = true;
+  controls.enableRotate = true;
   exposeDebugInterface(
     camera,
     controls,
@@ -340,7 +342,15 @@ export function createViewer(root: HTMLElement): void {
   let activeTool: ToolDescriptor | null = null;
   const sculptIconSrc = iconPath('sculpt.svg');
   const activeSculptPointers = new Set<number>();
+  const navigationPointers = new Set<number>();
+  const touchPointers = new Set<number>();
+  const pointerIntents = new Map<number, SculptPointerIntent>();
+  const lastPressTime: Record<string, number> = {};
   const isSculptToolActive = () => !!activeTool && activeTool.id === 'smooth' && !toolsOpen;
+  const refreshControlsEnabled = () => {
+    const navigating = navigationPointers.size > 0 || activeSculptPointers.size === 0;
+    controls.enabled = navigating;
+  };
   const refreshHighlight = (
     hit: SceneIntersection | null,
     pointerType: string
@@ -424,80 +434,119 @@ export function createViewer(root: HTMLElement): void {
     }
     activeSculptPointers.delete(pointerId);
   };
+  const resetPointer = (event: PointerEvent) => {
+    releasePointer(event.pointerId);
+    navigationPointers.delete(event.pointerId);
+    pointerIntents.delete(event.pointerId);
+    if (event.pointerType === 'touch') {
+      touchPointers.delete(event.pointerId);
+    }
+    refreshControlsEnabled();
+  };
+  const isNavigationButtons = (buttons: number) => (buttons & 6) !== 0;
+  const isDoublePress = (event: PointerEvent) => {
+    if (event.pointerType === 'touch') {
+      return false;
+    }
+    if (event.detail >= 2) {
+      return true;
+    }
+    const last = lastPressTime[event.pointerType] ?? 0;
+    const delta = event.timeStamp - last;
+    lastPressTime[event.pointerType] = event.timeStamp;
+    return delta > 0 && delta < 320;
+  };
 
   renderer.domElement.addEventListener('pointerdown', (event) => {
+    const doublePress = isDoublePress(event);
+    if (event.pointerType === 'touch') {
+      touchPointers.add(event.pointerId);
+      if (touchPointers.size > 1) {
+        navigationPointers.add(event.pointerId);
+        refreshControlsEnabled();
+        sculptHighlight.clear();
+        return;
+      }
+    }
     const coords = getPointerNdc(event);
     if (!coords) {
       sculptHighlight.clear();
+      refreshControlsEnabled();
       return;
     }
     const hit = pickSceneIntersection(coords.x, coords.y);
-    refreshHighlight(hit, event.pointerType);
-    if (hit && isSculptToolActive()) {
-      activeSculptPointers.add(event.pointerId);
-      renderer.domElement.setPointerCapture(event.pointerId);
-      smoothAtIntersection({
-        hit,
-        camera,
-        renderer,
-        pointerType: event.pointerType
-      });
-      refreshHighlight(hit, event.pointerType);
+    const intent = resolveSculptIntent({
+      pointerType: event.pointerType,
+      button: event.button,
+      altKey: event.altKey,
+      hasHit: !!hit,
+      sculptToolActive: isSculptToolActive(),
+      doublePress
+    });
+    pointerIntents.set(event.pointerId, intent);
+    if (intent === 'navigate') {
+      navigationPointers.add(event.pointerId);
+      refreshControlsEnabled();
+      sculptHighlight.clear();
       return;
     }
 
+    navigationPointers.delete(event.pointerId);
+    activeSculptPointers.add(event.pointerId);
+    renderer.domElement.setPointerCapture(event.pointerId);
+    refreshControlsEnabled();
     if (hit) {
-      return;
-    }
-
-    if (activeTool) {
-      applyActiveTool(null);
-    }
-    if (toolsOpen) {
-      toolsOpen = false;
-      updateToolsVisibility();
+      refreshHighlight(hit, event.pointerType);
+    } else {
+      sculptHighlight.clear();
     }
   });
 
   renderer.domElement.addEventListener('pointermove', (event) => {
     const coords = getPointerNdc(event);
-    if (!coords) {
+    const hit = coords ? pickSceneIntersection(coords.x, coords.y) : null;
+    const intent = pointerIntents.get(event.pointerId);
+    const navigating =
+      intent === 'navigate' ||
+      navigationPointers.size > 0 ||
+      event.altKey ||
+      isNavigationButtons(event.buttons);
+
+    if (coords && hit && isSculptToolActive() && !navigating) {
+      refreshHighlight(hit, event.pointerType);
+    } else {
       sculptHighlight.clear();
-      if (activeSculptPointers.has(event.pointerId)) {
-        releasePointer(event.pointerId);
-      }
-      return;
     }
-    const hit = pickSceneIntersection(coords.x, coords.y);
-    refreshHighlight(hit, event.pointerType);
+
     if (!activeSculptPointers.has(event.pointerId)) {
       return;
     }
-    if (!isSculptToolActive()) {
+    if (!isSculptToolActive() || navigating || !hit) {
       releasePointer(event.pointerId);
+      refreshControlsEnabled();
       return;
     }
-    if (hit) {
-      smoothAtIntersection({
-        hit,
-        camera,
-        renderer,
-        pointerType: event.pointerType
-      });
-      refreshHighlight(hit, event.pointerType);
-    }
+    smoothAtIntersection({
+      hit,
+      camera,
+      renderer,
+      pointerType: event.pointerType
+    });
+    refreshHighlight(hit, event.pointerType);
   });
 
   const endPointer = (event: PointerEvent) => {
-    if (activeSculptPointers.has(event.pointerId)) {
-      releasePointer(event.pointerId);
-    }
+    resetPointer(event);
   };
 
   renderer.domElement.addEventListener('pointerup', endPointer);
   renderer.domElement.addEventListener('pointercancel', endPointer);
-  renderer.domElement.addEventListener('pointerleave', () => {
-    activeSculptPointers.clear();
+  renderer.domElement.addEventListener('pointerleave', (event) => {
+    resetPointer(event);
+    if (event.pointerType === 'touch') {
+      touchPointers.clear();
+      activeSculptPointers.clear();
+    }
     sculptHighlight.clear();
   });
 

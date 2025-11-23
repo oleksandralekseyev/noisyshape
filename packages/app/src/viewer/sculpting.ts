@@ -1,19 +1,24 @@
 import type { Intersection, Object3D, PerspectiveCamera, Scene } from 'three';
 import {
+  AdditiveBlending,
   BufferGeometry,
+  Color,
   DoubleSide,
-  Float32BufferAttribute,
   Matrix4,
   Mesh,
-  MeshBasicMaterial,
+  ShaderMaterial,
   Vector3,
   WebGLRenderer
 } from 'three';
 
 const TOUCH_RADIUS_PX = 48;
-const POINTER_RADIUS_PX = 20;
+const POINTER_RADIUS_PX = 40;
 const PEN_RADIUS_PX = 24;
-const SMOOTHING_STRENGTH = 0.35;
+const SMOOTHING_STRENGTH = 0.1;
+const SMOOTHING_MU_SCALE = -0.6;
+const HIGHLIGHT_COLOR = new Color('#29b6f6');
+const HIGHLIGHT_EDGE_FEATHER = 0.3;
+const HIGHLIGHT_OPACITY = 0.6;
 
 export interface SculptHighlightController {
   update(params: {
@@ -55,7 +60,7 @@ export function smoothAtIntersection({
   const matrixWorld = mesh.matrixWorld;
   const inverse = new Matrix4().copy(matrixWorld).invert();
   const centroid = new Vector3();
-  const selected: Array<{ index: number; position: Vector3 }> = [];
+  const selected: Array<{ index: number; world: Vector3; local: Vector3 }> = [];
   const vertex = new Vector3();
   const worldVertex = new Vector3();
 
@@ -64,7 +69,7 @@ export function smoothAtIntersection({
     worldVertex.copy(vertex).applyMatrix4(matrixWorld);
     if (worldVertex.distanceTo(hit.point) <= worldRadius) {
       centroid.add(worldVertex);
-      selected.push({ index: i, position: worldVertex.clone() });
+      selected.push({ index: i, world: worldVertex.clone(), local: vertex.clone() });
     }
   }
 
@@ -73,9 +78,13 @@ export function smoothAtIntersection({
   }
 
   centroid.divideScalar(selected.length);
+  const lambda = SMOOTHING_STRENGTH;
+  const mu = lambda * SMOOTHING_MU_SCALE;
   const updated = new Vector3();
-  selected.forEach(({ index, position }) => {
-    updated.copy(position).lerp(centroid, SMOOTHING_STRENGTH).applyMatrix4(inverse);
+  selected.forEach(({ index, world }) => {
+    updated.copy(world).lerp(centroid, lambda);
+    updated.lerp(centroid, mu);
+    updated.applyMatrix4(inverse);
     positionAttr.setXYZ(index, updated.x, updated.y, updated.z);
   });
 
@@ -102,7 +111,13 @@ function getWorldRadius(
 ): number {
   const distance = point.distanceTo(camera.position);
   const fovRadians = (camera.fov * Math.PI) / 180;
-  const viewportHeight = renderer.domElement.clientHeight || 1;
+  const pixelRatio =
+    typeof renderer.getPixelRatio === 'function'
+      ? renderer.getPixelRatio()
+      : typeof window !== 'undefined'
+        ? window.devicePixelRatio || 1
+        : 1;
+  const viewportHeight = (renderer.domElement.clientHeight || 1) * pixelRatio;
   const worldHeightAtDistance = 2 * distance * Math.tan(fovRadians / 2);
   const worldPerPixel = worldHeightAtDistance / viewportHeight;
   return worldPerPixel * radiusPx;
@@ -120,39 +135,60 @@ function findMesh(object: Object3D): Mesh | null {
   return null;
 }
 
-export function createSculptHighlight(scene: Scene): SculptHighlightController {
-  const geometry = new BufferGeometry();
-  const material = new MeshBasicMaterial({
-    color: '#29b6f6',
+function createHighlightMaterial(): ShaderMaterial {
+  return new ShaderMaterial({
+    uniforms: {
+      uCenter: { value: new Vector3() },
+      uRadius: { value: 0 },
+      uColor: { value: HIGHLIGHT_COLOR.clone() },
+      uEdgeFeather: { value: HIGHLIGHT_EDGE_FEATHER },
+      uOpacity: { value: HIGHLIGHT_OPACITY }
+    },
+    vertexShader: `
+      varying vec3 vWorldPosition;
+
+      void main() {
+        vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+        vWorldPosition = worldPosition.xyz;
+        gl_Position = projectionMatrix * viewMatrix * worldPosition;
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 uCenter;
+      uniform float uRadius;
+      uniform vec3 uColor;
+      uniform float uEdgeFeather;
+      uniform float uOpacity;
+      varying vec3 vWorldPosition;
+
+      void main() {
+        float dist = length(vWorldPosition - uCenter);
+        float falloff = 1.0 - smoothstep(uRadius * (1.0 - uEdgeFeather), uRadius, dist);
+        if (falloff <= 0.001) discard;
+        gl_FragColor = vec4(uColor * falloff, falloff * uOpacity);
+      }
+    `,
     transparent: true,
-    opacity: 0.45,
     depthWrite: false,
-    side: DoubleSide
+    depthTest: true,
+    side: DoubleSide,
+    blending: AdditiveBlending,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -2,
+    toneMapped: false
   });
-  const highlightMesh = new Mesh(geometry, material);
+}
+
+export function createSculptHighlight(scene: Scene): SculptHighlightController {
+  const material = createHighlightMaterial();
+  const highlightMesh = new Mesh(new BufferGeometry(), material);
+  highlightMesh.name = 'sculpt-highlight';
   highlightMesh.visible = false;
   highlightMesh.frustumCulled = false;
   highlightMesh.matrixAutoUpdate = false;
   highlightMesh.renderOrder = 999;
   scene.add(highlightMesh);
-
-  const writePositions = (values: Float32Array) => {
-    if (values.length === 0) {
-      geometry.setDrawRange(0, 0);
-      highlightMesh.visible = false;
-      return;
-    }
-    const existing = geometry.getAttribute('position') as Float32BufferAttribute | undefined;
-    if (!existing || existing.array.length !== values.length) {
-      geometry.setAttribute('position', new Float32BufferAttribute(values, 3));
-    } else {
-      existing.array.set(values);
-      existing.needsUpdate = true;
-    }
-    geometry.computeVertexNormals();
-    geometry.setDrawRange(0, values.length / 3);
-    highlightMesh.visible = true;
-  };
 
   const update: SculptHighlightController['update'] = ({ hit, camera, renderer, pointerType }) => {
     const mesh = findMesh(hit.object);
@@ -160,103 +196,30 @@ export function createSculptHighlight(scene: Scene): SculptHighlightController {
       clear();
       return;
     }
-    mesh.updateMatrixWorld(true);
     const radiusPx = getPointerRadius(pointerType);
     const worldRadius = getWorldRadius(radiusPx, camera, renderer, hit.point);
     if (worldRadius <= 0) {
       clear();
       return;
     }
-    const positions = computeSculptHighlightTriangles({
-      mesh,
-      hitPoint: hit.point,
-      worldRadius
-    });
-    if (!positions || positions.length === 0) {
-      clear();
-      return;
-    }
-    writePositions(positions);
+    mesh.updateMatrixWorld(true);
+    highlightMesh.geometry = mesh.geometry;
+    highlightMesh.matrix.copy(mesh.matrixWorld);
+    highlightMesh.matrixWorld.copy(mesh.matrixWorld);
+    highlightMesh.matrixWorldNeedsUpdate = false;
+    highlightMesh.layers.mask = mesh.layers.mask;
+
+    const uniforms = material.uniforms;
+    uniforms.uCenter.value.copy(hit.point);
+    uniforms.uRadius.value = worldRadius;
+
+    highlightMesh.visible = true;
   };
 
   const clear = () => {
-    writePositions(new Float32Array(0));
+    material.uniforms.uRadius.value = 0;
+    highlightMesh.visible = false;
   };
 
   return { update, clear };
-}
-
-export function computeSculptHighlightTriangles({
-  mesh,
-  hitPoint,
-  worldRadius
-}: {
-  mesh: Mesh;
-  hitPoint: Vector3;
-  worldRadius: number;
-}): Float32Array | null {
-  const geometry = mesh.geometry as BufferGeometry;
-  const positionAttr = geometry.getAttribute('position');
-  if (!positionAttr) {
-    return null;
-  }
-
-  if (worldRadius <= 0) {
-    return null;
-  }
-
-  const radiusSq = worldRadius * worldRadius;
-  const vertices = new Map<number, Vector3>();
-  const localVertex = new Vector3();
-  const centroid = new Vector3();
-  const positions: number[] = [];
-
-  const getWorldVertex = (index: number) => {
-    const cached = vertices.get(index);
-    if (cached) {
-      return cached;
-    }
-    const worldVertex = localVertex.fromBufferAttribute(positionAttr, index).clone();
-    worldVertex.applyMatrix4(mesh.matrixWorld);
-    vertices.set(index, worldVertex);
-    return worldVertex;
-  };
-
-  const pushTriangle = (a: Vector3, b: Vector3, c: Vector3) => {
-    positions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
-  };
-
-  const withinRadius = (a: Vector3, b: Vector3, c: Vector3) => {
-    if (a.distanceToSquared(hitPoint) <= radiusSq) return true;
-    if (b.distanceToSquared(hitPoint) <= radiusSq) return true;
-    if (c.distanceToSquared(hitPoint) <= radiusSq) return true;
-    centroid.copy(a).add(b).add(c).divideScalar(3);
-    return centroid.distanceToSquared(hitPoint) <= radiusSq;
-  };
-
-  const indexAttr = geometry.getIndex();
-  if (indexAttr) {
-    for (let i = 0; i < indexAttr.count; i += 3) {
-      const aIndex = indexAttr.getX(i);
-      const bIndex = indexAttr.getX(i + 1);
-      const cIndex = indexAttr.getX(i + 2);
-      const a = getWorldVertex(aIndex);
-      const b = getWorldVertex(bIndex);
-      const c = getWorldVertex(cIndex);
-      if (withinRadius(a, b, c)) {
-        pushTriangle(a, b, c);
-      }
-    }
-  } else {
-    for (let i = 0; i < positionAttr.count; i += 3) {
-      const a = getWorldVertex(i);
-      const b = getWorldVertex(i + 1);
-      const c = getWorldVertex(i + 2);
-      if (withinRadius(a, b, c)) {
-        pushTriangle(a, b, c);
-      }
-    }
-  }
-
-  return new Float32Array(positions);
 }
