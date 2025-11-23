@@ -89,7 +89,7 @@ export function smoothAtIntersection({
   });
 
   positionAttr.needsUpdate = true;
-  geometry.computeVertexNormals();
+
   return true;
 }
 
